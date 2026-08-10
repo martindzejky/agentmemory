@@ -7,7 +7,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { DedupMap } from "../src/functions/dedup.js";
-import type { RawObservation } from "../src/types.js";
+import type { CompressedObservation, RawObservation } from "../src/types.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -117,7 +117,7 @@ describe("mem::observe eventId idempotency", () => {
       eventId: "evt_1",
     });
 
-    const obs = await kv.list<RawObservation>("mem:obs:ses_event_id");
+    const obs = await kv.list("mem:obs:ses_event_id");
     expect(obs).toHaveLength(1);
   });
 
@@ -142,7 +142,7 @@ describe("mem::observe eventId idempotency", () => {
     expect(b.observationId).toBeTruthy();
     expect(a.observationId).not.toBe(b.observationId);
 
-    const obs = await kv.list<RawObservation>("mem:obs:ses_event_id");
+    const obs = await kv.list("mem:obs:ses_event_id");
     expect(obs).toHaveLength(2);
   });
 
@@ -167,36 +167,32 @@ describe("mem::observe eventId idempotency", () => {
     expect(second.observationId).toBeTruthy();
     expect(first.observationId).not.toBe(second.observationId);
 
-    const obs = await kv.list<RawObservation>("mem:obs:ses_event_id");
+    const obs = await kv.list("mem:obs:ses_event_id");
     expect(obs).toHaveLength(2);
     expect(loggerWarn).toHaveBeenCalled();
   });
 
-  it("stores eventId on the RawObservation when present", async () => {
-    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
-    try {
-      const { registerObserveFunction } = await import(
-        "../src/functions/observe.js"
-      );
-      const sdk = mockSdk();
-      const kv = mockKV();
-      registerObserveFunction(sdk as never, kv as never, dedupMap);
+  it("stores eventId on the final CompressedObservation (default synthetic path)", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never, dedupMap);
 
-      const result = (await sdk.trigger(
-        "mem::observe",
-        basePayload({ eventId: "evt_stored" }),
-      )) as { observationId: string };
+    const result = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_stored" }),
+    )) as { observationId: string };
 
-      // AUTO_COMPRESS leaves the raw row in place (compress is void/async);
-      // the default synthetic path would overwrite it with CompressedObservation.
-      const stored = await kv.get<RawObservation>(
-        "mem:obs:ses_event_id",
-        result.observationId,
-      );
-      expect(stored?.eventId).toBe("evt_stored");
-    } finally {
-      delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
-    }
+    // Default path overwrites the raw row with synthetic CompressedObservation;
+    // eventId must survive that overwrite.
+    const stored = await kv.get<CompressedObservation>(
+      "mem:obs:ses_event_id",
+      result.observationId,
+    );
+    expect(stored?.type).toBeDefined();
+    expect(stored?.eventId).toBe("evt_stored");
   });
 
   it("allows the same eventId in two different sessions", async () => {
@@ -222,5 +218,81 @@ describe("mem::observe eventId idempotency", () => {
 
     expect(await kv.list("mem:obs:ses_a")).toHaveLength(1);
     expect(await kv.list("mem:obs:ses_b")).toHaveLength(1);
+  });
+
+  it("deduplicates concurrent observes with the same eventId", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never, dedupMap);
+
+    const results = await Promise.all([
+      sdk.trigger("mem::observe", basePayload({ eventId: "evt_race" })),
+      sdk.trigger("mem::observe", basePayload({ eventId: "evt_race" })),
+    ]);
+
+    const written = results.filter(
+      (r): r is { observationId: string } =>
+        typeof r === "object" &&
+        r !== null &&
+        "observationId" in r &&
+        typeof (r as { observationId: unknown }).observationId === "string",
+    );
+    const deduped = results.filter(
+      (r): r is { deduplicated: true } =>
+        typeof r === "object" &&
+        r !== null &&
+        (r as { deduplicated?: boolean }).deduplicated === true,
+    );
+
+    expect(written).toHaveLength(1);
+    expect(deduped).toHaveLength(1);
+    expect(await kv.list("mem:obs:ses_event_id")).toHaveLength(1);
+  });
+
+  it("does not collide when sessionId/eventId pairs share a colon shape", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never, dedupMap);
+
+    // Flat `${sessionId}:${eventId}` would make these collide.
+    const a = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ sessionId: "a:b", eventId: "c" }),
+    )) as { observationId: string };
+    const b = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ sessionId: "a", eventId: "b:c" }),
+    )) as { observationId: string };
+
+    expect(a.observationId).toBeTruthy();
+    expect(b.observationId).toBeTruthy();
+    expect(a.observationId).not.toBe(b.observationId);
+    expect(await kv.list("mem:obs:a:b")).toHaveLength(1);
+    expect(await kv.list("mem:obs:a")).toHaveLength(1);
+  });
+});
+
+describe("buildSyntheticCompression eventId carry-through", () => {
+  it("copies eventId onto the synthetic CompressedObservation", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const raw: RawObservation = {
+      id: "obs_1",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "prompt_submit",
+      userPrompt: "hello",
+      raw: { prompt: "hello" },
+      eventId: "evt_synth",
+    };
+    const synth = buildSyntheticCompression(raw);
+    expect(synth.eventId).toBe("evt_synth");
   });
 });

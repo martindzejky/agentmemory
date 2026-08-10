@@ -66,15 +66,7 @@ export function registerObserveFunction(
           ? payload.eventId.trim()
           : undefined;
 
-      if (eventId) {
-        if (dedupMap?.isDuplicate(payload.sessionId, eventId)) {
-          return {
-            deduplicated: true,
-            sessionId: payload.sessionId,
-            eventId,
-          };
-        }
-      } else {
+      if (!eventId) {
         logger.warn("Observation accepted without eventId", {
           sessionId: payload.sessionId,
           hookType: payload.hookType,
@@ -129,6 +121,16 @@ export function registerObserveFunction(
       const pendingImageData = extractedImage;
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
+        // Inside the existing obs: session lock. record() stays after
+        // successful kv.set so a failed write cannot poison the key.
+        if (eventId && dedupMap?.isDuplicate(payload.sessionId, eventId)) {
+          return {
+            deduplicated: true,
+            sessionId: payload.sessionId,
+            eventId,
+          };
+        }
+
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           const existing = await kv.list(KV.observations(payload.sessionId));
           if (existing.length >= maxObservationsPerSession) {

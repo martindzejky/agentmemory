@@ -66,6 +66,8 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
+  /** Client-supplied idempotency key; carried from RawObservation. */
+  eventId?: string;
 }
 
 export type ObservationType =
