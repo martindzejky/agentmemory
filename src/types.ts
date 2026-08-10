@@ -12,6 +12,9 @@ export interface Session {
   summary?: string;
   commitShas?: string[];
   agentId?: string;
+  updatedAt?: string;
+  idleProcessedObservationCount?: number;
+  idleProcessedAt?: string;
 }
 
 export interface CommitLink {

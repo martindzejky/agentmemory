@@ -51,12 +51,22 @@ describe("openclaw plugin — memory capability registration (closes #286 follow
   });
 
   it("promptBuilder returns lines that mention the configured base_url", async () => {
-    const mod = await import("../integrations/openclaw/plugin.mjs");
-    const plugin = (mod as unknown as { default: { register(api: FakeApi): void } }).default;
-    const api = makeApi({ pluginConfig: { base_url: "http://memory.internal:9999" } });
-    plugin.register(api);
-    const capability = (api.registerMemoryCapability as ReturnType<typeof vi.fn>).mock.calls[0][0] as Capability;
-    const lines = capability.promptBuilder?.({ availableTools: new Set() }) ?? [];
-    expect(lines.join("\n")).toMatch(/memory\.internal:9999/);
+    // Cloud/CI shells may set AGENTMEMORY_REQUIRE_HTTPS=1 + SECRET; that
+    // would throw on non-loopback http:// URLs during register().
+    const prevRequire = process.env.AGENTMEMORY_REQUIRE_HTTPS;
+    delete process.env.AGENTMEMORY_REQUIRE_HTTPS;
+    try {
+      const mod = await import("../integrations/openclaw/plugin.mjs");
+      const plugin = (mod as unknown as { default: { register(api: FakeApi): void } }).default;
+      const api = makeApi({ pluginConfig: { base_url: "http://memory.internal:9999" } });
+      plugin.register(api);
+      const capability = (api.registerMemoryCapability as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as Capability;
+      const lines = capability.promptBuilder?.({ availableTools: new Set() }) ?? [];
+      expect(lines.join("\n")).toMatch(/memory\.internal:9999/);
+    } finally {
+      if (prevRequire === undefined) delete process.env.AGENTMEMORY_REQUIRE_HTTPS;
+      else process.env.AGENTMEMORY_REQUIRE_HTTPS = prevRequire;
+    }
   });
 });
