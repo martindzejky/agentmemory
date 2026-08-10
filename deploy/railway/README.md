@@ -22,13 +22,16 @@ deploy logs and copy it into your client.
 
 1. Click **Deploy from GitHub** in the Railway dashboard and pick this
    fork (`martindzejky/agentmemory`) or your own fork of it.
-2. Set the **Config-as-Code Path** under the service Settings to
+2. Set the service **Root Directory** to `/` (repository root). The
+   Dockerfile builds from the checked-out source via `COPY . .`, so a
+   root of `/deploy/railway` cannot see `package.json` / `src/`.
+3. Set the **Config-as-Code Path** under the service Settings to
    `deploy/railway/railway.json`. Railway picks up the Dockerfile path
    from there.
-3. Open the service's **Volumes** tab and add a volume mounted at
+4. Open the service's **Volumes** tab and add a volume mounted at
    `/data` (Railway volumes are configured in the dashboard or via
    `railway volume add`, not in `railway.json`).
-4. Click **Deploy**.
+5. Click **Deploy**.
 
 ## Deploy via Railway CLI
 
