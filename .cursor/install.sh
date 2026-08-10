@@ -5,6 +5,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AGENTFILES="${HOME}/.agentfiles"
+NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
 
 # pull latest agentfiles
 if [ ! -d "$AGENTFILES/.git" ]; then
@@ -16,10 +17,14 @@ git -C "$AGENTFILES" fetch origin master
 git -C "$AGENTFILES" checkout -B master origin/master
 HOME="$HOME" "$AGENTFILES/install"
 
-# set up nvm
+# set up nvm (Node 24). Put nvm's bin first so cloud shims like
+# /exec-daemon/node do not win over the intended runtime.
 . "$NVM_DIR/nvm.sh"
 nvm use 24
+NODE_BIN_DIR="$(dirname "$(nvm which current)")"
+export PATH="${NODE_BIN_DIR}:${PATH}"
 
-# install dependencies
+# Lockfiles are gitignored in this repo, so npm ci cannot be used.
+# Match .github/workflows/ci.yml.
 cd "$ROOT"
-npm ci
+npm install --legacy-peer-deps --no-audit --no-fund
