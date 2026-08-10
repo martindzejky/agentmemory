@@ -20,8 +20,8 @@ deploy logs and copy it into your client.
 
 ## Deploy via Railway dashboard
 
-1. Click **Deploy from GitHub** in the Railway dashboard and pick the
-   `rohitg00/agentmemory` repo.
+1. Click **Deploy from GitHub** in the Railway dashboard and pick this
+   fork (`martindzejky/agentmemory`) or your own fork of it.
 2. Set the **Config-as-Code Path** under the service Settings to
    `deploy/railway/railway.json`. Railway picks up the Dockerfile path
    from there.
@@ -130,7 +130,9 @@ See <https://railway.com/pricing> for the current rate card.
 
 - Railway volumes do not auto-snapshot. Take your own backups (above)
   or use the dashboard's manual snapshot feature.
-- The Dockerfile builds on Railway's builder on every deploy. First
-  deploy is ~2 minutes; cached layers make subsequent rebuilds quick.
-  Pin `AGENTMEMORY_VERSION` / `III_VERSION` build args in the
-  service's *Variables* tab to lock a specific release.
+- The Dockerfile builds agentmemory from this repository on every
+  deploy (via `npm pack` into `/opt/agentmemory`), so the running
+  service matches the checked-out fork source. First deploy is longer
+  than an npm-install-only image; cached layers make subsequent
+  rebuilds quicker. Pin `III_VERSION` / `III_SDK_VERSION` build args
+  in the service's *Variables* tab to lock the iii engine/SDK.
