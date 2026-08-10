@@ -16,5 +16,10 @@ metadata:
 
 ## Runtime
 
-- No local Docker services — install with `npm install --legacy-peer-deps` (lockfiles are gitignored; do not use `npm ci`).
+- Install with `npm install --legacy-peer-deps` (lockfiles are gitignored; do not use `npm ci`).
 - Typical validation: `npm run build`, `npm run skills:check`, `npm test` (iii-sdk is mocked in unit tests).
+
+## Docker
+
+- The cloud environment starts Docker via `sudo service docker start`. If `docker info` fails, run that again.
+- For local iii-engine via Compose: `docker compose up -d` (see `docker-compose.yml`).
