@@ -61,21 +61,24 @@ export function registerObserveFunction(
 
       const obsId = generateId("obs");
 
-      let dedupHash: string | undefined;
-      if (dedupMap) {
-        const d =
-          typeof payload.data === "object" && payload.data !== null
-            ? (payload.data as Record<string, unknown>)
-            : {};
-        const toolName = (d["tool_name"] as string) || payload.hookType;
-        dedupHash = dedupMap.computeHash(
-          payload.sessionId,
-          toolName,
-          d["tool_input"],
-        );
-        if (dedupMap.isDuplicate(dedupHash)) {
-          return { deduplicated: true, sessionId: payload.sessionId };
+      const eventId =
+        typeof payload.eventId === "string" && payload.eventId.trim().length > 0
+          ? payload.eventId.trim()
+          : undefined;
+
+      if (eventId) {
+        if (dedupMap?.isDuplicate(payload.sessionId, eventId)) {
+          return {
+            deduplicated: true,
+            sessionId: payload.sessionId,
+            eventId,
+          };
         }
+      } else {
+        logger.warn("Observation accepted without eventId", {
+          sessionId: payload.sessionId,
+          hookType: payload.hookType,
+        });
       }
 
       let sanitizedRaw: unknown = payload.data;
@@ -93,6 +96,7 @@ export function registerObserveFunction(
         timestamp: payload.timestamp,
         hookType: payload.hookType,
         raw: sanitizedRaw,
+        ...(eventId ? { eventId } : {}),
       };
 
       let extractedImage: string | undefined;
@@ -201,8 +205,8 @@ export function registerObserveFunction(
           throw error;
         }
 
-        if (dedupMap && dedupHash) {
-          dedupMap.record(dedupHash);
+        if (eventId && dedupMap) {
+          dedupMap.record(payload.sessionId, eventId);
         }
 
         await sdk.trigger({

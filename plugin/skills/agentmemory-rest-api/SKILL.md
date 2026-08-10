@@ -33,6 +33,12 @@ By default localhost is open and no auth is needed. When `AGENTMEMORY_SECRET` is
 - Handlers whitelist body fields and drop unknown ones, so passing extra keys is safe but ignored.
 - The port is configurable with `--port` or `--instance`; streams, viewer, and engine derive from it.
 
+## Observe
+
+`POST /agentmemory/observe` requires `hookType`, `sessionId`, `project`, `cwd`, and `timestamp`. Optional: `agentId`, `data`, and `eventId`.
+
+`eventId` is the client idempotency key. A repeat of the same `eventId` for the same session is a no-op (`deduplicated: true`). Identical content with different `eventId`s both persist. Omitting `eventId` always writes; content/time-window ingest dedup is gone. Recommended for retries, not required.
+
 ## See also
 
 - agentmemory-mcp-tools for the MCP equivalents.

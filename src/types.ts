@@ -44,6 +44,8 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
+  /** Client-supplied idempotency key; persisted when present. */
+  eventId?: string;
 }
 
 export interface CompressedObservation {
@@ -142,6 +144,8 @@ export interface HookPayload {
   data: unknown;
   /** Optional host agent id; stamped on lazy session create via write paths. */
   agentId?: string;
+  /** Optional client event id for ingest idempotency (retry = no-op). */
+  eventId?: string;
 }
 
 export interface ProviderConfig {

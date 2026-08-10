@@ -1,10 +1,8 @@
-import { createHash } from "node:crypto";
-
 const TTL_MS = 5 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60_000;
 
 interface DedupEntry {
-  hash: string;
+  key: string;
   expiresAt: number;
 }
 
@@ -17,27 +15,24 @@ export class DedupMap {
     this.cleanupTimer.unref();
   }
 
-  computeHash(sessionId: string, toolName: string, toolInput: unknown): string {
-    const input =
-      typeof toolInput === "string"
-        ? toolInput.slice(0, 500)
-        : JSON.stringify(toolInput ?? "").slice(0, 500);
-    const raw = `${sessionId}:${toolName}:${input}`;
-    return createHash("sha256").update(raw).digest("hex");
+  private entryKey(sessionId: string, eventId: string): string {
+    return `${sessionId}:${eventId}`;
   }
 
-  isDuplicate(hash: string): boolean {
-    const entry = this.entries.get(hash);
+  isDuplicate(sessionId: string, eventId: string): boolean {
+    const key = this.entryKey(sessionId, eventId);
+    const entry = this.entries.get(key);
     if (!entry) return false;
     if (Date.now() > entry.expiresAt) {
-      this.entries.delete(hash);
+      this.entries.delete(key);
       return false;
     }
     return true;
   }
 
-  record(hash: string): void {
-    this.entries.set(hash, { hash, expiresAt: Date.now() + TTL_MS });
+  record(sessionId: string, eventId: string): void {
+    const key = this.entryKey(sessionId, eventId);
+    this.entries.set(key, { key, expiresAt: Date.now() + TTL_MS });
   }
 
   private cleanup(): void {
