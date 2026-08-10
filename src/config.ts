@@ -449,11 +449,10 @@ export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
 }
 
-// Cooldown between corpus consolidations triggered by session stop. The Stop
-// handler may still be invoked by recovery/evict bursts, so without this every call
+// Cooldown between corpus consolidations triggered by event::session::stopped.
+// Evict/recovery may invoke that handler in bursts; without this every call
 // would kick a full LLM semantic-merge + reflect + crystallize. Debounced to at
-// most once per window. Set to 0 to disable the debounce (consolidate on every
-// stop). Default 5 minutes.
+// most once per window. Set to 0 to disable the debounce. Default 5 minutes.
 const CONSOLIDATION_COOLDOWN_DEFAULT_MS = 300000;
 
 export function getConsolidationCooldownMs(): number {

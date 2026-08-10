@@ -12,7 +12,7 @@ import {
 import { logger } from "../logger.js";
 
 // Global marker recording when corpus consolidation last ran, used to debounce
-// the per-turn session-stop fan-out.
+// event::session::stopped fan-out (evict/recovery and future flush callers).
 const CONSOLIDATION_MARKER_KEY = "consolidation:lastRun";
 
 async function consolidationDueUnserialized(kv: StateKV): Promise<boolean> {
