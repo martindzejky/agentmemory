@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed
-
-- Railway deploy builds `@agentmemory/agentmemory` from the checked-out repository (`npm pack` + local tarball install) instead of installing the published npm package
-
 ## [0.9.29] — 2026-08-02
 
 Patch release: the `.env` file now actually applies everywhere, imports become searchable, consolidation runs on session stop, twelve MCP-only agents get activated on connect, and every capture surface finally agrees on what "project" means. No breaking changes; read the upgrade notes below for four behavior changes you will notice.

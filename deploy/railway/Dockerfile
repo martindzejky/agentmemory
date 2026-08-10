@@ -4,15 +4,11 @@ FROM iiidev/iii:${III_VERSION} AS iii-image
 
 # Build @agentmemory/agentmemory from this repository and pack it so the
 # runtime stage can install a local tarball instead of the npm registry.
+# Build context must be the repository root (Railway Root Directory = /).
 FROM node:22-slim AS build
 
-WORKDIR /src
-COPY package.json ./
-COPY tsconfig.json tsdown.config.ts ./
-COPY iii-config.yaml iii-config.docker.yaml docker-compose.yml .env.example ./
-COPY src ./src
-COPY plugin ./plugin
-COPY LICENSE README.md AGENTS.md ./
+WORKDIR /workspace
+COPY . .
 RUN npm install --no-fund --no-audit \
  && npm run build \
  && npm pack --pack-destination /tmp \
