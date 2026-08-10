@@ -5,6 +5,7 @@ import type { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import {
   getIdleSweepMaxSessions,
+  getIdleSweepObsCatchup,
   getIdleSweepSessionCooldownMs,
   getIdleThresholdMs,
   isIdleSweepEnabled,
@@ -22,11 +23,7 @@ export interface IdleSweepResult {
   capped: boolean;
 }
 
-type SessionRow = Session & {
-  updatedAt?: string;
-  idleProcessedObservationCount?: number;
-  idleProcessedAt?: string;
-};
+type SessionRow = Session;
 
 let sweepInFlight = false;
 
@@ -42,35 +39,50 @@ function activityAtMs(session: SessionRow): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function needsIdleProcessing(
+function pendingObservations(session: SessionRow): number {
+  const obsCount =
+    typeof session.observationCount === "number" ? session.observationCount : 0;
+  const processed =
+    typeof session.idleProcessedObservationCount === "number"
+      ? session.idleProcessedObservationCount
+      : 0;
+  return obsCount - processed;
+}
+
+function inCooldown(
+  session: SessionRow,
+  nowMs: number,
+  cooldownMs: number,
+): boolean {
+  if (cooldownMs <= 0 || typeof session.idleProcessedAt !== "string") {
+    return false;
+  }
+  const at = new Date(session.idleProcessedAt).getTime();
+  return Number.isFinite(at) && nowMs - at < cooldownMs;
+}
+
+/**
+ * A session is due when it has pending observations, is outside cooldown, and
+ * either (a) has been idle long enough, or (b) has accumulated enough pending
+ * observations that an all-day conversation should catch up without waiting
+ * for idle (updatedAt is refreshed on every /observe).
+ */
+function needsProcessing(
   session: SessionRow,
   nowMs: number,
   idleThresholdMs: number,
   cooldownMs: number,
+  obsCatchup: number,
 ): boolean {
-  const obsCount =
-    typeof session.observationCount === "number" ? session.observationCount : 0;
-  if (obsCount <= 0) return false;
+  const pending = pendingObservations(session);
+  if (pending <= 0) return false;
+  if (inCooldown(session, nowMs, cooldownMs)) return false;
 
   const activityMs = activityAtMs(session);
-  if (activityMs === null) return false;
-  if (nowMs - activityMs < idleThresholdMs) return false;
-
-  if (
-    typeof session.idleProcessedObservationCount === "number" &&
-    session.idleProcessedObservationCount >= obsCount
-  ) {
-    return false;
-  }
-
-  if (cooldownMs > 0 && typeof session.idleProcessedAt === "string") {
-    const processedMs = new Date(session.idleProcessedAt).getTime();
-    if (Number.isFinite(processedMs) && nowMs - processedMs < cooldownMs) {
-      return false;
-    }
-  }
-
-  return true;
+  const isIdle =
+    activityMs !== null && nowMs - activityMs >= idleThresholdMs;
+  const countCatchup = pending >= obsCatchup;
+  return isIdle || countCatchup;
 }
 
 function isProcessableResult(result: unknown): boolean {
@@ -78,26 +90,30 @@ function isProcessableResult(result: unknown): boolean {
   if (!("success" in result)) return true;
   const success = (result as { success?: unknown }).success;
   if (success === true) return true;
-  // Summarize returns success:false for empty sessions; treat as done so we
-  // do not retry forever when there is nothing compressible to summarize.
+  // Empty sessions are done — advance the count marker so we do not retry.
+  // no_provider is a failure: record attempt time for cooldown, but do not
+  // advance the count so a later working provider can still catch up.
   const error = (result as { error?: unknown }).error;
   return error === "no_observations";
 }
 
-async function markIdleProcessed(
+async function touchIdleAttempt(
   kv: StateKV,
   sessionId: string,
-  observationCount: number,
-  processedAt: string,
+  attemptedAt: string,
+  advanceObservationCount?: number,
 ): Promise<void> {
   await withKeyedLock(`session:${sessionId}`, async () => {
     const current = await kv.get<SessionRow>(KV.sessions, sessionId);
     if (!current) return;
-    await kv.set(KV.sessions, sessionId, {
+    const next: SessionRow = {
       ...current,
-      idleProcessedObservationCount: observationCount,
-      idleProcessedAt: processedAt,
-    });
+      idleProcessedAt: attemptedAt,
+    };
+    if (typeof advanceObservationCount === "number") {
+      next.idleProcessedObservationCount = advanceObservationCount;
+    }
+    await kv.set(KV.sessions, sessionId, next);
   });
 }
 
@@ -133,16 +149,23 @@ export function registerIdleSweepFunction(sdk: ISdk, kv: StateKV): void {
 
       sweepInFlight = true;
       const nowMs = Date.now();
-      const processedAt = new Date(nowMs).toISOString();
+      const attemptedAt = new Date(nowMs).toISOString();
       const idleThresholdMs = getIdleThresholdMs();
       const cooldownMs = getIdleSweepSessionCooldownMs();
       const maxSessions = getIdleSweepMaxSessions();
+      const obsCatchup = getIdleSweepObsCatchup();
 
       try {
         const sessions = await kv.list<SessionRow>(KV.sessions).catch(() => []);
         const candidates = sessions
           .filter((s) =>
-            needsIdleProcessing(s, nowMs, idleThresholdMs, cooldownMs),
+            needsProcessing(
+              s,
+              nowMs,
+              idleThresholdMs,
+              cooldownMs,
+              obsCatchup,
+            ),
           )
           .sort((a, b) => (activityAtMs(a) ?? 0) - (activityAtMs(b) ?? 0));
 
@@ -158,11 +181,12 @@ export function registerIdleSweepFunction(sdk: ISdk, kv: StateKV): void {
               const fresh = await kv.get<SessionRow>(KV.sessions, session.id);
               if (!fresh) return null;
               if (
-                !needsIdleProcessing(
+                !needsProcessing(
                   fresh,
                   Date.now(),
                   idleThresholdMs,
                   cooldownMs,
+                  obsCatchup,
                 )
               ) {
                 return null;
@@ -181,21 +205,25 @@ export function registerIdleSweepFunction(sdk: ISdk, kv: StateKV): void {
             });
             if (!isProcessableResult(result)) {
               failed++;
+              // Attempt timestamp only — keep pending count so a later
+              // success can catch up, but stay out of the next few sweeps.
+              await touchIdleAttempt(kv, stillDue.id, attemptedAt);
               logger.warn("Idle sweep session processing failed", {
                 sessionId: stillDue.id,
                 result,
               });
               continue;
             }
-            await markIdleProcessed(
+            await touchIdleAttempt(
               kv,
               stillDue.id,
+              attemptedAt,
               stillDue.observationCount || 0,
-              processedAt,
             );
             processed++;
           } catch (err) {
             failed++;
+            await touchIdleAttempt(kv, stillDue.id, attemptedAt);
             logger.warn("Idle sweep session processing failed", {
               sessionId: stillDue.id,
               error: err instanceof Error ? err.message : String(err),

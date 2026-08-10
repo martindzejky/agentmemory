@@ -472,10 +472,10 @@ const MIN_IDLE_THRESHOLD_MS = 60_000;
 const IDLE_SWEEP_MAX_SESSIONS_DEFAULT = 5;
 const MIN_IDLE_SWEEP_MAX_SESSIONS = 1;
 const IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS = 3_600_000; // 60m
-
-export function isLlmProviderConfigured(): boolean {
-  return hasLLMProviderConfigured(getMergedEnv());
-}
+// Pending observations before an active (not-yet-idle) session is eligible.
+// Closes the long-session gap where /observe keeps refreshing updatedAt.
+const IDLE_SWEEP_OBS_CATCHUP_DEFAULT = 25;
+const MIN_IDLE_SWEEP_OBS_CATCHUP = 1;
 
 /** Kill switch + provider gate. Keyless installs and explicit off do no work. */
 export function isIdleSweepEnabled(): boolean {
@@ -519,6 +519,16 @@ export function getIdleSweepSessionCooldownMs(): number {
     IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS,
   );
   return raw >= 0 ? raw : IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS;
+}
+
+export function getIdleSweepObsCatchup(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_IDLE_SWEEP_OBS_CATCHUP"],
+    IDLE_SWEEP_OBS_CATCHUP_DEFAULT,
+  );
+  return raw >= MIN_IDLE_SWEEP_OBS_CATCHUP
+    ? raw
+    : IDLE_SWEEP_OBS_CATCHUP_DEFAULT;
 }
 
 export function isStandaloneMcp(): boolean {

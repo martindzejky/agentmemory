@@ -6,6 +6,7 @@ const KEYS = [
   "AGENTMEMORY_IDLE_THRESHOLD_MS",
   "AGENTMEMORY_IDLE_SWEEP_MAX_SESSIONS",
   "AGENTMEMORY_IDLE_SWEEP_SESSION_COOLDOWN_MS",
+  "AGENTMEMORY_IDLE_SWEEP_OBS_CATCHUP",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
@@ -37,17 +38,19 @@ describe("idle sweep config", () => {
     cfg.__resetEnvFileCache();
   });
 
-  it("falls back when interval/threshold/max are zero or negative", async () => {
+  it("falls back when interval/threshold/max/catchup are zero or negative", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test";
     process.env.AGENTMEMORY_IDLE_SWEEP_INTERVAL_MS = "0";
     process.env.AGENTMEMORY_IDLE_THRESHOLD_MS = "-1";
     process.env.AGENTMEMORY_IDLE_SWEEP_MAX_SESSIONS = "0";
+    process.env.AGENTMEMORY_IDLE_SWEEP_OBS_CATCHUP = "0";
     const cfg = await import("../src/config.js");
     cfg.__resetEnvFileCache();
 
     expect(cfg.getIdleSweepIntervalMs()).toBe(900_000);
     expect(cfg.getIdleThresholdMs()).toBe(1_800_000);
     expect(cfg.getIdleSweepMaxSessions()).toBe(5);
+    expect(cfg.getIdleSweepObsCatchup()).toBe(25);
     expect(cfg.isIdleSweepEnabled()).toBe(true);
   });
 

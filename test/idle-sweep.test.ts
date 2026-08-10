@@ -16,6 +16,7 @@ vi.mock("../src/config.js", async (importOriginal) => ({
   getIdleThresholdMs: vi.fn(() => 30 * 60 * 1000),
   getIdleSweepMaxSessions: vi.fn(() => 5),
   getIdleSweepSessionCooldownMs: vi.fn(() => 60 * 60 * 1000),
+  getIdleSweepObsCatchup: vi.fn(() => 25),
 }));
 
 import {
@@ -23,6 +24,7 @@ import {
   getIdleThresholdMs,
   getIdleSweepMaxSessions,
   getIdleSweepSessionCooldownMs,
+  getIdleSweepObsCatchup,
 } from "../src/config.js";
 
 type Store = Map<string, Map<string, unknown>>;
@@ -73,6 +75,8 @@ function mockKV(store: Store) {
 function mockSdk(opts?: {
   stoppedResult?: unknown;
   rejectStopped?: boolean;
+  rejectForSessionIds?: Set<string>;
+  resultForSessionIds?: Map<string, unknown>;
 }) {
   const handlers = new Map<string, Handler>();
   const calls: Array<{ function_id: string; payload: unknown }> = [];
@@ -85,8 +89,15 @@ function mockSdk(opts?: {
       trigger: async (input: { function_id: string; payload: unknown }) => {
         calls.push(input);
         if (input.function_id === "event::session::stopped") {
-          if (opts?.rejectStopped) {
+          const sessionId = (input.payload as { sessionId?: string }).sessionId;
+          if (
+            opts?.rejectStopped ||
+            (sessionId && opts?.rejectForSessionIds?.has(sessionId))
+          ) {
             throw new Error("stopped failed");
+          }
+          if (sessionId && opts?.resultForSessionIds?.has(sessionId)) {
+            return opts.resultForSessionIds.get(sessionId);
           }
           return opts?.stoppedResult ?? { success: true, summary: { title: "ok" } };
         }
@@ -112,7 +123,7 @@ async function runSweep(store: Store, sdkOpts?: Parameters<typeof mockSdk>[0]) {
   registerIdleSweepFunction(sdk as never, mockKV(store) as never);
   const sweep = handlers.get("mem::idle-sweep")!;
   const result = await sweep({});
-  return { result, calls, store };
+  return { result, calls, store, sweep, sdk };
 }
 
 describe("mem::idle-sweep", () => {
@@ -122,6 +133,7 @@ describe("mem::idle-sweep", () => {
     vi.mocked(getIdleThresholdMs).mockReturnValue(30 * 60 * 1000);
     vi.mocked(getIdleSweepMaxSessions).mockReturnValue(5);
     vi.mocked(getIdleSweepSessionCooldownMs).mockReturnValue(60 * 60 * 1000);
+    vi.mocked(getIdleSweepObsCatchup).mockReturnValue(25);
   });
 
   afterEach(() => {
@@ -176,7 +188,7 @@ describe("mem::idle-sweep", () => {
     expect(calls).toEqual([]);
   });
 
-  it("skips a recently-active session that is not yet idle", async () => {
+  it("skips a recently-active session below the observation catch-up threshold", async () => {
     const store = storeWithSessions([
       makeSession("ses_hot", {
         updatedAt: minutesAgo(5),
@@ -192,6 +204,34 @@ describe("mem::idle-sweep", () => {
       candidates: 0,
     });
     expect(calls).toEqual([]);
+  });
+
+  it("processes a recently-active session once pending observations hit catch-up", async () => {
+    vi.mocked(getIdleSweepObsCatchup).mockReturnValue(10);
+    const store = storeWithSessions([
+      makeSession("ses_long", {
+        updatedAt: minutesAgo(1),
+        observationCount: 30,
+        idleProcessedObservationCount: 5,
+      }),
+    ]);
+
+    const { result, calls } = await runSweep(store);
+
+    expect(result).toMatchObject({
+      success: true,
+      processed: 1,
+      candidates: 1,
+      failed: 0,
+    });
+    expect(calls).toEqual([
+      {
+        function_id: "event::session::stopped",
+        payload: { sessionId: "ses_long", skipConsolidation: true },
+      },
+    ]);
+    const updated = store.get(KV.sessions)!.get("ses_long") as Session;
+    expect(updated.idleProcessedObservationCount).toBe(30);
   });
 
   it("respects the per-sweep session cap", async () => {
@@ -266,7 +306,6 @@ describe("mem::idle-sweep", () => {
       startedAt: minutesAgo(120),
       status: "active",
       observationCount: 2,
-      // no updatedAt, no idleProcessed*
     };
     const store = storeWithSessions([legacy]);
 
@@ -322,6 +361,78 @@ describe("mem::idle-sweep", () => {
     expect(result).toMatchObject({ processed: 1, failed: 0 });
     const updated = out.get(KV.sessions)!.get("ses_empty_obs") as Session;
     expect(updated.idleProcessedObservationCount).toBe(1);
+  });
+
+  it("records attempt time on rejected trigger without advancing the count marker", async () => {
+    vi.mocked(getIdleSweepMaxSessions).mockReturnValue(1);
+    const store = storeWithSessions([
+      makeSession("ses_fail", {
+        updatedAt: minutesAgo(90),
+        observationCount: 3,
+      }),
+      makeSession("ses_ok", {
+        updatedAt: minutesAgo(60),
+        observationCount: 2,
+      }),
+    ]);
+
+    const { result, calls, store: out, sweep } = await runSweep(store, {
+      rejectForSessionIds: new Set(["ses_fail"]),
+    });
+
+    expect(result).toMatchObject({ processed: 0, failed: 1, candidates: 2 });
+    expect(calls).toHaveLength(1);
+    expect((calls[0].payload as { sessionId: string }).sessionId).toBe(
+      "ses_fail",
+    );
+
+    const failed = out.get(KV.sessions)!.get("ses_fail") as Session;
+    expect(failed.idleProcessedObservationCount).toBeUndefined();
+    expect(typeof failed.idleProcessedAt).toBe("string");
+
+    // Second sweep: failing session is in cooldown, healthy session proceeds.
+    const second = await sweep({});
+    expect(second).toMatchObject({ processed: 1, failed: 0, candidates: 1 });
+    const ok = out.get(KV.sessions)!.get("ses_ok") as Session;
+    expect(ok.idleProcessedObservationCount).toBe(2);
+  });
+
+  it("records attempt time on non-processable results like no_provider", async () => {
+    vi.mocked(getIdleSweepMaxSessions).mockReturnValue(1);
+    const store = storeWithSessions([
+      makeSession("ses_noprov", {
+        updatedAt: minutesAgo(90),
+        observationCount: 4,
+      }),
+      makeSession("ses_ok2", {
+        updatedAt: minutesAgo(60),
+        observationCount: 2,
+      }),
+    ]);
+
+    const { result, calls, store: out, sweep } = await runSweep(store, {
+      resultForSessionIds: new Map([
+        ["ses_noprov", { success: false, error: "no_provider" }],
+      ]),
+    });
+
+    expect(result).toMatchObject({ processed: 0, failed: 1, candidates: 2 });
+    expect(calls).toHaveLength(1);
+    expect((calls[0].payload as { sessionId: string }).sessionId).toBe(
+      "ses_noprov",
+    );
+    const failed = out.get(KV.sessions)!.get("ses_noprov") as Session;
+    expect(failed.idleProcessedObservationCount).toBeUndefined();
+    expect(typeof failed.idleProcessedAt).toBe("string");
+
+    // After backoff, ses_ok2 is selected and succeeds — ses_noprov no longer
+    // monopolizes the cap=1 slot.
+    const second = await sweep({});
+    expect(second).toMatchObject({ processed: 1, failed: 0, candidates: 1 });
+    expect(
+      (out.get(KV.sessions)!.get("ses_ok2") as Session)
+        .idleProcessedObservationCount,
+    ).toBe(2);
   });
 
   it("does not overlap concurrent sweep invocations", async () => {
