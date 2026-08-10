@@ -301,6 +301,10 @@ export function registerApiTriggers(
           },
         };
       }
+      const requestAgentId =
+        typeof body.agentId === "string" && body.agentId.trim().length > 0
+          ? body.agentId.trim().slice(0, 128)
+          : undefined;
       const payload: HookPayload = {
         hookType: hookType as HookPayload["hookType"],
         sessionId,
@@ -308,6 +312,7 @@ export function registerApiTriggers(
         cwd,
         timestamp,
         data: body.data,
+        ...(requestAgentId ? { agentId: requestAgentId } : {}),
       };
       const result = await sdk.trigger({ function_id: "mem::observe", payload });
       return { status_code: 201, body: result };
@@ -684,13 +689,25 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::summarize", 
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
-      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
       if (!sessionId) {
         return { status_code: 400, body: { error: "sessionId is required" } };
       }
+      const project = asNonEmptyString(body.project);
+      const cwd = asNonEmptyString(body.cwd);
+      const requestAgentId =
+        typeof body.agentId === "string" && body.agentId.trim().length > 0
+          ? body.agentId.trim().slice(0, 128)
+          : undefined;
       const result = await sdk.trigger({
         function_id: "mem::summarize",
-        payload: { sessionId },
+        payload: {
+          sessionId,
+          ...(project ? { project } : {}),
+          ...(cwd ? { cwd } : {}),
+          ...(requestAgentId ? { agentId: requestAgentId } : {}),
+        },
       });
       return { status_code: 200, body: result };
     },

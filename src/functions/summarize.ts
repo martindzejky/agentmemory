@@ -19,6 +19,7 @@ import { validateOutput } from "../eval/validator.js";
 import { scoreSummary } from "../eval/quality.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { safeAudit } from "./audit.js";
+import { ensureSession } from "./ensure-session.js";
 import { logger } from "../logger.js";
 
 // Per-chunk observation budget when a session is too large to fit in one
@@ -233,19 +234,34 @@ export function registerSummarizeFunction(
   metricsStore?: MetricsStore,
 ): void {
   sdk.registerFunction("mem::summarize", 
-    async (data: { sessionId: string } | undefined) => {
+    async (data: {
+      sessionId: string;
+      project?: string;
+      cwd?: string;
+      agentId?: string;
+    } | undefined) => {
       const startMs = Date.now();
       if (!data || typeof data.sessionId !== "string" || !data.sessionId.trim()) {
         return { success: false, error: "sessionId is required" };
       }
       const sessionId = data.sessionId.trim();
 
-      const session = await kv.get<Session>(KV.sessions, sessionId);
+      let session = await kv.get<Session>(KV.sessions, sessionId);
       if (!session) {
-        logger.warn("Session not found for summarize", {
+        const ensured = await ensureSession(kv, {
           sessionId,
+          project: typeof data.project === "string" ? data.project : undefined,
+          cwd: typeof data.cwd === "string" ? data.cwd : undefined,
+          agentId: typeof data.agentId === "string" ? data.agentId : undefined,
+          createObservationCount: 0,
         });
-        return { success: false, error: "session_not_found" };
+        if (!ensured.ok) {
+          logger.warn("Session not found for summarize", {
+            sessionId,
+          });
+          return { success: false, error: "session_not_found" };
+        }
+        session = ensured.session;
       }
 
       const observations = await kv.list<CompressedObservation>(

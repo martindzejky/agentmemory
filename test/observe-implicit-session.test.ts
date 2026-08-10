@@ -122,12 +122,14 @@ describe("observe implicit session create (#638)", () => {
       status: "active",
       observationCount: 7,
       firstPrompt: "original first prompt",
+      agentId: "claude",
     });
 
     await sdk.trigger("mem::observe", {
       sessionId: "ses_existing",
       project: "/different/project",
       cwd: "/different/cwd",
+      agentId: "cursor",
       hookType: "post_tool_use",
       timestamp: new Date().toISOString(),
       data: { tool_name: "Read" },
@@ -140,5 +142,128 @@ describe("observe implicit session create (#638)", () => {
     // Counter bumped, updatedAt refreshed
     expect(session.observationCount).toBe(8);
     expect(session.updatedAt).toBeTruthy();
+    // Existing agentId is not overwritten by request body
+    expect(session.agentId).toBe("claude");
+  });
+
+  it("stamps request agentId on lazy create without prior session/start", async () => {
+    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger("mem::observe", {
+      sessionId: "ses_cursor_cloud",
+      project: "/workspace",
+      cwd: "/workspace",
+      agentId: "cursor",
+      hookType: "prompt_submit",
+      timestamp: new Date().toISOString(),
+      data: { prompt: "make session start optional" },
+    });
+
+    const session = kv.store.get("mem:sessions")!.get("ses_cursor_cloud") as Record<
+      string,
+      unknown
+    >;
+    expect(session.agentId).toBe("cursor");
+    expect(session.observationCount).toBe(1);
+  });
+
+  it("falls back to AGENT_ID env when request agentId is omitted on lazy create", async () => {
+    const prev = process.env["AGENT_ID"];
+    process.env["AGENT_ID"] = "env-agent";
+    try {
+      const { registerObserveFunction } = await import("../src/functions/observe.js");
+      const sdk = mockSdk();
+      const kv = mockKV();
+      registerObserveFunction(sdk as never, kv as never);
+
+      await sdk.trigger("mem::observe", {
+        sessionId: "ses_env_agent",
+        project: "/workspace",
+        cwd: "/workspace",
+        hookType: "prompt_submit",
+        timestamp: new Date().toISOString(),
+        data: { prompt: "no body agentId" },
+      });
+
+      const session = kv.store.get("mem:sessions")!.get("ses_env_agent") as Record<
+        string,
+        unknown
+      >;
+      expect(session.agentId).toBe("env-agent");
+    } finally {
+      if (prev === undefined) delete process.env["AGENT_ID"];
+      else process.env["AGENT_ID"] = prev;
+    }
+  });
+
+  it("prefers request agentId over AGENT_ID env on lazy create", async () => {
+    const prev = process.env["AGENT_ID"];
+    process.env["AGENT_ID"] = "env-agent";
+    try {
+      const { registerObserveFunction } = await import("../src/functions/observe.js");
+      const sdk = mockSdk();
+      const kv = mockKV();
+      registerObserveFunction(sdk as never, kv as never);
+
+      await sdk.trigger("mem::observe", {
+        sessionId: "ses_prefers_request",
+        project: "/workspace",
+        cwd: "/workspace",
+        agentId: "cursor",
+        hookType: "prompt_submit",
+        timestamp: new Date().toISOString(),
+        data: { prompt: "request wins" },
+      });
+
+      const session = kv.store
+        .get("mem:sessions")!
+        .get("ses_prefers_request") as Record<string, unknown>;
+      expect(session.agentId).toBe("cursor");
+    } finally {
+      if (prev === undefined) delete process.env["AGENT_ID"];
+      else process.env["AGENT_ID"] = prev;
+    }
+  });
+
+  it("does not retrofit env AGENT_ID onto an existing session without agentId", async () => {
+    const prev = process.env["AGENT_ID"];
+    process.env["AGENT_ID"] = "env-agent";
+    try {
+      const { registerObserveFunction } = await import("../src/functions/observe.js");
+      const sdk = mockSdk();
+      const kv = mockKV();
+      registerObserveFunction(sdk as never, kv as never);
+
+      await kv.set("mem:sessions", "ses_unscoped", {
+        id: "ses_unscoped",
+        project: "/workspace",
+        cwd: "/workspace",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "active",
+        observationCount: 2,
+      });
+
+      await sdk.trigger("mem::observe", {
+        sessionId: "ses_unscoped",
+        project: "/workspace",
+        cwd: "/workspace",
+        hookType: "post_tool_use",
+        timestamp: new Date().toISOString(),
+        data: { tool_name: "Read" },
+      });
+
+      const session = kv.store.get("mem:sessions")!.get("ses_unscoped") as Record<
+        string,
+        unknown
+      >;
+      expect(session.agentId).toBeUndefined();
+      expect(session.observationCount).toBe(3);
+    } finally {
+      if (prev === undefined) delete process.env["AGENT_ID"];
+      else process.env["AGENT_ID"] = prev;
+    }
   });
 });

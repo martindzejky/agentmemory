@@ -480,3 +480,47 @@ describe("mem::summarize chunking", () => {
     expect(result.error).toBe("parse_failed");
   });
 });
+
+describe("mem::summarize lazy session create", () => {
+  it("lazy-creates a session when project+cwd provided and proceeds past session_not_found", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = makeProvider([
+      summaryXml({ title: "Lazy session summary" }),
+    ]);
+    const sessionId = "ses_lazy_summarize";
+    await kv.set(`obs:${sessionId}`, "obs_0", makeObs(0, sessionId));
+    registerSummarizeFunction(sdk as any, kv as any, provider);
+    const handler = sdk.functions.get("mem::summarize")!;
+
+    const result: any = await handler({
+      sessionId,
+      project: "/workspace",
+      cwd: "/workspace",
+      agentId: "cursor",
+    });
+
+    expect(result.success).toBe(true);
+    const session: any = await kv.get("sessions", sessionId);
+    expect(session).toBeTruthy();
+    expect(session.project).toBe("/workspace");
+    expect(session.cwd).toBe("/workspace");
+    expect(session.agentId).toBe("cursor");
+    expect(session.observationCount).toBe(0);
+    expect(session.status).toBe("active");
+  });
+
+  it("still returns session_not_found when session missing and project/cwd absent", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const provider = makeProvider([summaryXml({ title: "unused" })]);
+    registerSummarizeFunction(sdk as any, kv as any, provider);
+    const handler = sdk.functions.get("mem::summarize")!;
+
+    const result: any = await handler({ sessionId: "ses_missing_only" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("session_not_found");
+    expect(await kv.get("sessions", "ses_missing_only")).toBeNull();
+  });
+});
