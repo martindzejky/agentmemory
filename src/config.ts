@@ -463,6 +463,64 @@ export function getConsolidationCooldownMs(): number {
   return raw >= 0 ? raw : CONSOLIDATION_COOLDOWN_DEFAULT_MS;
 }
 
+// Idle catch-up sweep (Pass C): periodic backstop when Cursor stop/preCompact
+// hooks miss. Defaults are deliberately slow — many minutes, small batch.
+const IDLE_SWEEP_INTERVAL_DEFAULT_MS = 900_000; // 15m
+const MIN_IDLE_SWEEP_INTERVAL_MS = 60_000; // 1m floor — 0 would saturate the loop
+const IDLE_THRESHOLD_DEFAULT_MS = 1_800_000; // 30m
+const MIN_IDLE_THRESHOLD_MS = 60_000;
+const IDLE_SWEEP_MAX_SESSIONS_DEFAULT = 5;
+const MIN_IDLE_SWEEP_MAX_SESSIONS = 1;
+const IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS = 3_600_000; // 60m
+
+export function isLlmProviderConfigured(): boolean {
+  return hasLLMProviderConfigured(getMergedEnv());
+}
+
+/** Kill switch + provider gate. Keyless installs and explicit off do no work. */
+export function isIdleSweepEnabled(): boolean {
+  const env = getMergedEnv();
+  const explicit = env["AGENTMEMORY_IDLE_SWEEP_ENABLED"];
+  if (explicit === "false" || explicit === "0") return false;
+  return hasLLMProviderConfigured(env);
+}
+
+export function getIdleSweepIntervalMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_IDLE_SWEEP_INTERVAL_MS"],
+    IDLE_SWEEP_INTERVAL_DEFAULT_MS,
+  );
+  return raw >= MIN_IDLE_SWEEP_INTERVAL_MS
+    ? raw
+    : IDLE_SWEEP_INTERVAL_DEFAULT_MS;
+}
+
+export function getIdleThresholdMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_IDLE_THRESHOLD_MS"],
+    IDLE_THRESHOLD_DEFAULT_MS,
+  );
+  return raw >= MIN_IDLE_THRESHOLD_MS ? raw : IDLE_THRESHOLD_DEFAULT_MS;
+}
+
+export function getIdleSweepMaxSessions(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_IDLE_SWEEP_MAX_SESSIONS"],
+    IDLE_SWEEP_MAX_SESSIONS_DEFAULT,
+  );
+  return raw >= MIN_IDLE_SWEEP_MAX_SESSIONS
+    ? raw
+    : IDLE_SWEEP_MAX_SESSIONS_DEFAULT;
+}
+
+export function getIdleSweepSessionCooldownMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_IDLE_SWEEP_SESSION_COOLDOWN_MS"],
+    IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS,
+  );
+  return raw >= 0 ? raw : IDLE_SWEEP_SESSION_COOLDOWN_DEFAULT_MS;
+}
+
 export function isStandaloneMcp(): boolean {
   return getMergedEnv()["STANDALONE_MCP"] === "true";
 }

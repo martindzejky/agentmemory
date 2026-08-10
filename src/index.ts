@@ -13,6 +13,8 @@ import {
   isConsolidationEnabled,
   isContextInjectionEnabled,
   isDropStaleIndexEnabled,
+  isIdleSweepEnabled,
+  getIdleSweepIntervalMs,
 } from "./config.js";
 import {
   createProvider,
@@ -48,6 +50,7 @@ import { registerConsolidateFunction } from "./functions/consolidate.js";
 import { registerPatternsFunction } from "./functions/patterns.js";
 import { registerRememberFunction } from "./functions/remember.js";
 import { registerEvictFunction } from "./functions/evict.js";
+import { registerIdleSweepFunction } from "./functions/idle-sweep.js";
 import { registerRelationsFunction } from "./functions/relations.js";
 import { registerTimelineFunction } from "./functions/timeline.js";
 import { registerSmartSearchFunction } from "./functions/smart-search.js";
@@ -256,6 +259,7 @@ async function main() {
   registerPatternsFunction(sdk, kv);
   registerRememberFunction(sdk, kv);
   registerEvictFunction(sdk, kv);
+  registerIdleSweepFunction(sdk, kv);
 
   registerRelationsFunction(sdk, kv);
   registerTimelineFunction(sdk, kv);
@@ -609,6 +613,21 @@ async function main() {
     }, consolidationIntervalMs);
     consolidationTimer.unref();
     bootLog(`Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m)`);
+  }
+
+  // Pass C: idle catch-up when Cursor stop/preCompact hooks miss. Reuses
+  // event::session::stopped with skipConsolidation (corpus work stays on the
+  // consolidation timer above). unref'd like neighbouring timers — shutdown
+  // does not clearInterval for those either.
+  if (isIdleSweepEnabled()) {
+    const idleSweepIntervalMs = getIdleSweepIntervalMs();
+    const idleSweepTimer = setInterval(async () => {
+      try {
+        await sdk.trigger({ function_id: "mem::idle-sweep", payload: {} });
+      } catch {}
+    }, idleSweepIntervalMs);
+    idleSweepTimer.unref();
+    bootLog(`Idle catch-up sweep: enabled (every ${idleSweepIntervalMs / 60000}m)`);
   }
 
   const shutdown = async () => {

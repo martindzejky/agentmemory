@@ -4,7 +4,7 @@ import type { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { getAgentId } from "../config.js";
 
-export type SessionRecord = Session & { updatedAt?: string };
+export type SessionRecord = Session;
 
 export interface EnsureSessionInput {
   sessionId: string;

@@ -20,6 +20,7 @@ AGENTMEMORY_INJECT_CONTEXT=true
 
 - No API key is required. Without one, agentmemory runs zero-LLM with BM25 plus local embeddings.
 - Token-spending features ship OFF on purpose: `AGENTMEMORY_AUTO_COMPRESS` (LLM summaries) and `AGENTMEMORY_INJECT_CONTEXT` (auto context injection) both cost tokens proportional to tool-use frequency.
+- Idle catch-up (`mem::idle-sweep`) runs only when an LLM provider is configured. Default: every 15m, sessions idle ≥30m, max 5 sessions/sweep, 60m per-session cooldown. Disable with `AGENTMEMORY_IDLE_SWEEP_ENABLED=false`.
 - Tool visibility: `AGENTMEMORY_TOOLS=all` (default) or `core` for the lean set.
 - Auth: set `AGENTMEMORY_SECRET` to require `Authorization: Bearer` on the REST API.
 
