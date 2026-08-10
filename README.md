@@ -26,4 +26,4 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 
 ## Current fork progress
 
-- **Session start is optional.** `/observe` and `/summarize` lazy-create a session when `sessionId` + `project` + `cwd` arrive without a prior `/session/start`. Request `agentId` is honored on that create (e.g. `"cursor"`); `/session/start` still works for clients that call it.
+- **Session start is optional.** `/observe`, `/summarize`, and `/enrich` lazy-create a session when `sessionId` + `project` + `cwd` arrive without a prior `/session/start`. Request `agentId` is honored on that create (e.g. `"cursor"`); `/session/start` still works for clients that call it.

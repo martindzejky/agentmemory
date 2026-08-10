@@ -24,6 +24,7 @@ import {
   getAgentId,
   isAgentScopeIsolated,
 } from "../config.js";
+import { normalizeRequestAgentId } from "../functions/ensure-session.js";
 
 type Response = {
   status_code: number;
@@ -301,10 +302,7 @@ export function registerApiTriggers(
           },
         };
       }
-      const requestAgentId =
-        typeof body.agentId === "string" && body.agentId.trim().length > 0
-          ? body.agentId.trim().slice(0, 128)
-          : undefined;
+      const requestAgentId = normalizeRequestAgentId(body.agentId);
       const payload: HookPayload = {
         hookType: hookType as HookPayload["hookType"],
         sessionId,
@@ -696,10 +694,7 @@ export function registerApiTriggers(
       }
       const project = asNonEmptyString(body.project);
       const cwd = asNonEmptyString(body.cwd);
-      const requestAgentId =
-        typeof body.agentId === "string" && body.agentId.trim().length > 0
-          ? body.agentId.trim().slice(0, 128)
-          : undefined;
+      const requestAgentId = normalizeRequestAgentId(body.agentId);
       const result = await sdk.trigger({
         function_id: "mem::summarize",
         payload: {
@@ -953,16 +948,20 @@ export function registerApiTriggers(
         terms?: string[];
         toolName?: string;
         project?: string;
+        cwd?: string;
+        agentId?: string;
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      const files = Array.isArray(body.files) ? body.files : null;
       if (
-        !req.body?.sessionId ||
-        typeof req.body.sessionId !== "string" ||
-        !Array.isArray(req.body?.files) ||
-        req.body.files.length === 0 ||
-        !req.body.files.every((f: unknown) => typeof f === "string")
+        !sessionId ||
+        !files ||
+        files.length === 0 ||
+        !files.every((f: unknown) => typeof f === "string")
       ) {
         return {
           status_code: 400,
@@ -972,9 +971,9 @@ export function registerApiTriggers(
         };
       }
       if (
-        req.body.terms !== undefined &&
-        (!Array.isArray(req.body.terms) ||
-          !req.body.terms.every((t: unknown) => typeof t === "string"))
+        body.terms !== undefined &&
+        (!Array.isArray(body.terms) ||
+          !body.terms.every((t: unknown) => typeof t === "string"))
       ) {
         return {
           status_code: 400,
@@ -982,22 +981,38 @@ export function registerApiTriggers(
         };
       }
       if (
-        req.body.project !== undefined &&
-        (typeof req.body.project !== "string" || !req.body.project.trim())
+        body.project !== undefined &&
+        (typeof body.project !== "string" || !body.project.trim())
       ) {
         return {
           status_code: 400,
           body: { error: "project must be a non-empty string" },
         };
       }
+      if (
+        body.cwd !== undefined &&
+        (typeof body.cwd !== "string" || !body.cwd.trim())
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "cwd must be a non-empty string" },
+        };
+      }
+      const project = asNonEmptyString(body.project);
+      const cwd = asNonEmptyString(body.cwd);
+      const requestAgentId = normalizeRequestAgentId(body.agentId);
+      const toolName =
+        typeof body.toolName === "string" ? body.toolName : undefined;
       const result = await sdk.trigger({
         function_id: "mem::enrich",
         payload: {
-          sessionId: req.body.sessionId,
-          files: req.body.files,
-          ...(req.body.terms !== undefined && { terms: req.body.terms }),
-          ...(req.body.toolName !== undefined && { toolName: req.body.toolName }),
-          ...(req.body.project !== undefined && { project: req.body.project }),
+          sessionId,
+          files: files as string[],
+          ...(body.terms !== undefined && { terms: body.terms as string[] }),
+          ...(toolName !== undefined && { toolName }),
+          ...(project ? { project } : {}),
+          ...(cwd ? { cwd } : {}),
+          ...(requestAgentId ? { agentId: requestAgentId } : {}),
         },
       });
       return { status_code: 200, body: result };

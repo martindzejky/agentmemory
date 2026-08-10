@@ -2,6 +2,7 @@ import type { ISdk } from "iii-sdk";
 import type { Memory } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { ensureSession } from "./ensure-session.js";
 import { logger } from "../logger.js";
 
 const MAX_CONTEXT_LENGTH = 4000;
@@ -23,11 +24,34 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
       terms?: string[];
       toolName?: string;
       project?: string;
+      cwd?: string;
+      agentId?: string;
     }) => {
       const project =
         typeof data.project === "string" && data.project.trim().length > 0
           ? data.project.trim()
           : undefined;
+      const cwd =
+        typeof data.cwd === "string" && data.cwd.trim().length > 0
+          ? data.cwd.trim()
+          : undefined;
+
+      // Best-effort lazy session create for hosts that skip /session/start.
+      // Missing project/cwd is ignored — enrich still returns context.
+      if (
+        typeof data.sessionId === "string" &&
+        data.sessionId.trim().length > 0 &&
+        project &&
+        cwd
+      ) {
+        await ensureSession(kv, {
+          sessionId: data.sessionId.trim(),
+          project,
+          cwd,
+          agentId: data.agentId,
+          createObservationCount: 0,
+        });
+      }
 
       const parts: string[] = [];
 
