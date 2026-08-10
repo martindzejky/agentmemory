@@ -94,14 +94,12 @@ your laptop.
 When `AGENTMEMORY_VIEWER_HOST` is non-loopback the viewer enforces two
 extra guards: it refuses to start unless `VIEWER_ALLOWED_HOSTS` is
 explicitly set, and every request to `/agentmemory/*` must present
-`Authorization: Bearer $AGENTMEMORY_SECRET` (or
-`AGENTMEMORY_VIEWER_PROXY_SECRET` when set — inbound only; upstream REST
-calls still use `AGENTMEMORY_SECRET`). Neither secret is logged. Static
-HTML and the favicon are still served unauthenticated. If a proxied
-viewer request gets a 401, the browser UI prompts for the inbound secret
-and stores it in session storage so subsequent viewer API calls include
-the bearer. Use the value printed in the first-boot logs or read
-`/data/.hmac` inside the machine.
+`Authorization: Bearer $AGENTMEMORY_SECRET`. Static HTML and the
+favicon are still served unauthenticated. If a proxied viewer request
+gets a 401, the browser UI prompts for `AGENTMEMORY_SECRET` and stores
+it in session storage so subsequent viewer API calls include the bearer.
+Use the value printed in the first-boot logs or read `/data/.hmac`
+inside the machine.
 
 > **Security warning.** Setting `AGENTMEMORY_VIEWER_HOST=0.0.0.0` or
 > `::` turns the viewer into a network-reachable proxy that signs every

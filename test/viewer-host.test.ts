@@ -143,26 +143,19 @@ describe("requireInboundBearer", () => {
 describe("startViewerServer host binding", () => {
   const originalEnv = process.env.AGENTMEMORY_VIEWER_HOST;
   const originalOverride = process.env.VIEWER_ALLOWED_HOSTS;
-  const originalProxy = process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
   let server: Server | undefined;
-  let upstream: Server | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    delete process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
   });
 
   afterEach(async () => {
     if (server) {
       await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = undefined;
-    }
-    if (upstream) {
-      await new Promise<void>((resolve) => upstream!.close(() => resolve()));
-      upstream = undefined;
     }
     logSpy.mockRestore();
     warnSpy.mockRestore();
@@ -175,11 +168,6 @@ describe("startViewerServer host binding", () => {
       delete process.env.VIEWER_ALLOWED_HOSTS;
     } else {
       process.env.VIEWER_ALLOWED_HOSTS = originalOverride;
-    }
-    if (originalProxy === undefined) {
-      delete process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
-    } else {
-      process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = originalProxy;
     }
   });
 
@@ -264,56 +252,47 @@ describe("startViewerServer host binding", () => {
     expect(goodBearer.status).not.toBe(401);
   });
 
-  it("accepts AGENTMEMORY_VIEWER_PROXY_SECRET and rejects the API secret for inbound auth", async () => {
-    process.env.AGENTMEMORY_VIEWER_HOST = "0.0.0.0";
-    process.env.VIEWER_ALLOWED_HOSTS = "placeholder";
-    process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = "viewer-proxy-secret";
-    const apiSecret = "api-secret-xyz";
-    server = startViewerServer(0, null, null, apiSecret);
-    await waitForListening(server);
-    const addr = server.address() as AddressInfo;
-    process.env.VIEWER_ALLOWED_HOSTS = `127.0.0.1:${addr.port}`;
-
-    const apiBearer = await fetch(
-      `http://127.0.0.1:${addr.port}/agentmemory/livez`,
-      { headers: { Authorization: `Bearer ${apiSecret}` } },
-    );
-    expect(apiBearer.status).toBe(401);
-
-    const proxyBearer = await fetch(
-      `http://127.0.0.1:${addr.port}/agentmemory/livez`,
-      { headers: { Authorization: "Bearer viewer-proxy-secret" } },
-    );
-    expect(proxyBearer.status).not.toBe(401);
-  });
-
-  it("forwards AGENTMEMORY_SECRET upstream when inbound uses the proxy secret", async () => {
+  it("uses AGENTMEMORY_VIEWER_PROXY_SECRET for inbound auth when set", async () => {
+    const prev = process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
     process.env.AGENTMEMORY_VIEWER_HOST = "0.0.0.0";
     process.env.VIEWER_ALLOWED_HOSTS = "placeholder";
     process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = "viewer-proxy-secret";
     const apiSecret = "api-secret-xyz";
 
     let seenAuth: string | undefined;
-    upstream = createServer((req, res) => {
+    const upstream = createServer((req, res) => {
       seenAuth = req.headers.authorization;
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end("{}");
     });
     await new Promise<void>((resolve) =>
-      upstream!.listen(0, "127.0.0.1", resolve),
+      upstream.listen(0, "127.0.0.1", resolve),
     );
     const upstreamPort = (upstream.address() as AddressInfo).port;
 
-    server = startViewerServer(0, null, null, apiSecret, upstreamPort);
-    await waitForListening(server);
-    const addr = server.address() as AddressInfo;
-    process.env.VIEWER_ALLOWED_HOSTS = `127.0.0.1:${addr.port}`;
+    try {
+      server = startViewerServer(0, null, null, apiSecret, upstreamPort);
+      await waitForListening(server);
+      const addr = server.address() as AddressInfo;
+      process.env.VIEWER_ALLOWED_HOSTS = `127.0.0.1:${addr.port}`;
 
-    const res = await fetch(`http://127.0.0.1:${addr.port}/agentmemory/livez`, {
-      headers: { Authorization: "Bearer viewer-proxy-secret" },
-    });
-    expect(res.status).toBe(200);
-    expect(seenAuth).toBe(`Bearer ${apiSecret}`);
+      const apiBearer = await fetch(
+        `http://127.0.0.1:${addr.port}/agentmemory/livez`,
+        { headers: { Authorization: `Bearer ${apiSecret}` } },
+      );
+      expect(apiBearer.status).toBe(401);
+
+      const proxyBearer = await fetch(
+        `http://127.0.0.1:${addr.port}/agentmemory/livez`,
+        { headers: { Authorization: "Bearer viewer-proxy-secret" } },
+      );
+      expect(proxyBearer.status).toBe(200);
+      expect(seenAuth).toBe(`Bearer ${apiSecret}`);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      if (prev === undefined) delete process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
+      else process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = prev;
+    }
   });
 
   it("does not require inbound auth on the loopback default bind", async () => {

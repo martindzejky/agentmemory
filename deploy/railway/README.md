@@ -86,9 +86,6 @@ dashboard, open the service's *Settings → Networking* tab and add a
 **TCP Proxy** for container port `3113`. Railway returns a public
 host/port pair you can hit directly from your browser. Pair it with the
 HMAC bearer-auth header so the viewer is not anonymously reachable.
-For a non-loopback viewer bind behind a reverse proxy, set
-`AGENTMEMORY_VIEWER_PROXY_SECRET` for inbound auth and keep
-`AGENTMEMORY_SECRET` for upstream REST calls.
 
 **Browser session — option B (in-container sshd):** add an `openssh-server`
 process to the image and start it from `entrypoint.sh` on a fixed port,
