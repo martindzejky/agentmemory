@@ -10,6 +10,7 @@ import type { Memory } from "../src/types.js";
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
+    store,
     get: async <T>(scope: string, key: string): Promise<T | null> => {
       return (store.get(scope)?.get(key) as T) ?? null;
     },
@@ -17,6 +18,17 @@ function mockKV() {
       if (!store.has(scope)) store.set(scope, new Map());
       store.get(scope)!.set(key, data);
       return data;
+    },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ path: string; value: unknown }>,
+    ) => {
+      const m = store.get(scope);
+      if (!m) return;
+      const v = (m.get(key) as Record<string, unknown>) ?? {};
+      for (const u of updates) v[u.path] = u.value;
+      m.set(key, v);
     },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
@@ -209,5 +221,45 @@ describe("Enrich Function", () => {
 
     expect(result.context).toContain("Race condition");
     expect(result.context).not.toContain("Singleton pattern");
+  });
+
+  it("lazy-creates a session with request agentId when project+cwd present", async () => {
+    sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
+    sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
+
+    const result = (await sdk.trigger("mem::enrich", {
+      sessionId: "ses_enrich_lazy",
+      files: ["src/handler.ts"],
+      project: "/workspace",
+      cwd: "/workspace",
+      agentId: "cursor",
+    })) as { context: string; truncated: boolean };
+
+    expect(result.context).toBeDefined();
+    const session = (await kv.get(
+      "mem:sessions",
+      "ses_enrich_lazy",
+    )) as Record<string, unknown> | null;
+    expect(session).toBeTruthy();
+    expect(session!.agentId).toBe("cursor");
+    expect(session!.project).toBe("/workspace");
+    expect(session!.cwd).toBe("/workspace");
+    expect(session!.observationCount).toBe(0);
+    expect(session!.status).toBe("active");
+  });
+
+  it("still returns context when project/cwd missing (no session create)", async () => {
+    sdk.overrideTrigger("mem::file-context", async () => ({
+      context: "ok without session",
+    }));
+    sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
+
+    const result = (await sdk.trigger("mem::enrich", {
+      sessionId: "ses_enrich_nosession",
+      files: ["src/handler.ts"],
+    })) as { context: string; truncated: boolean };
+
+    expect(result.context).toContain("ok without session");
+    expect(await kv.get("mem:sessions", "ses_enrich_nosession")).toBeNull();
   });
 });

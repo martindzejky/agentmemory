@@ -23,3 +23,7 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 - **Trigger work from signals, not session end.** Run at turn boundaries, after idle time, after event or token thresholds, on an explicit flush, and from a periodic recovery sweep. Do not call an LLM on every observation. If Cursor Cloud skips a hook, memory formation must still catch up later.
 - **`/session/end` only flushes.** Keep it as a deprecated, stateless flush for old clients. It must not close the conversation or reject later events. If the UI needs an archive flag, that is a user action, not an ingest state.
 - **Keep host adapters thin.** They translate hook payloads into the shared envelope. They do not paper over server gaps with prompt caches or fake tool events. Skip agent thoughts by default. Keep prompts, final responses, decisions, and useful tool outcomes.
+
+## Current fork progress
+
+- **Session start is optional.** `/observe`, `/summarize`, and `/enrich` lazy-create a session when `sessionId` + `project` + `cwd` arrive without a prior `/session/start`. Request `agentId` is honored on that create (e.g. `"cursor"`); `/session/start` still works for clients that call it.

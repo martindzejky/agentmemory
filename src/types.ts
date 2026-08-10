@@ -137,6 +137,8 @@ export interface HookPayload {
   cwd: string;
   timestamp: string;
   data: unknown;
+  /** Optional host agent id; stamped on lazy session create via write paths. */
+  agentId?: string;
 }
 
 export interface ProviderConfig {
