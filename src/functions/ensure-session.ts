@@ -1,6 +1,7 @@
 import type { Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
+import { withKeyedLock } from "../state/keyed-mutex.js";
 import { getAgentId } from "../config.js";
 
 export type SessionRecord = Session & { updatedAt?: string };
@@ -60,79 +61,86 @@ function hasProjectAndCwd(
  * Ensure a session row exists for write/touch paths that may arrive before
  * /session/start. Existing rows are touched safely (updatedAt / counts /
  * firstPrompt fill) without wiping identity fields or overwriting agentId.
+ *
+ * Serialized per sessionId via withKeyedLock (same pattern as
+ * api::session::commit) so concurrent observe/summarize lazy-creates cannot
+ * overwrite each other.
  */
 export async function ensureSession(
   kv: StateKV,
   input: EnsureSessionInput,
 ): Promise<EnsureSessionResult> {
-  const existing = await kv.get<SessionRecord>(KV.sessions, input.sessionId);
-  const now = new Date().toISOString();
+  return withKeyedLock(`session:${input.sessionId}`, async () => {
+    const existing = await kv.get<SessionRecord>(KV.sessions, input.sessionId);
+    const now = new Date().toISOString();
 
-  if (existing) {
-    const touchUpdatedAt = input.touchUpdatedAt !== false;
-    const updates: Array<{ type: "set"; path: string; value: unknown }> = [];
+    if (existing) {
+      const touchUpdatedAt = input.touchUpdatedAt !== false;
+      const updates: Array<{ type: "set"; path: string; value: unknown }> = [];
 
-    if (touchUpdatedAt) {
-      updates.push({ type: "set", path: "updatedAt", value: now });
+      if (touchUpdatedAt) {
+        updates.push({ type: "set", path: "updatedAt", value: now });
+      }
+
+      if (
+        typeof input.incrementObservationCount === "number" &&
+        input.incrementObservationCount !== 0
+      ) {
+        updates.push({
+          type: "set",
+          path: "observationCount",
+          value:
+            (existing.observationCount || 0) + input.incrementObservationCount,
+        });
+      }
+
+      if (
+        !existing.firstPrompt &&
+        typeof input.firstPrompt === "string" &&
+        input.firstPrompt.trim().length > 0
+      ) {
+        updates.push({
+          type: "set",
+          path: "firstPrompt",
+          value: input.firstPrompt.trim().slice(0, 200),
+        });
+      }
+
+      if (updates.length > 0) {
+        await kv.update(KV.sessions, input.sessionId, updates);
+      }
+
+      const session =
+        (await kv.get<SessionRecord>(KV.sessions, input.sessionId)) ?? existing;
+      return { ok: true, created: false, session };
     }
 
-    if (
-      typeof input.incrementObservationCount === "number" &&
-      input.incrementObservationCount !== 0
-    ) {
-      updates.push({
-        type: "set",
-        path: "observationCount",
-        value:
-          (existing.observationCount || 0) + input.incrementObservationCount,
-      });
+    if (!hasProjectAndCwd(input.project, input.cwd)) {
+      return { ok: false, reason: "missing_project_cwd" };
     }
 
-    if (
-      !existing.firstPrompt &&
+    const project = (input.project as string).trim();
+    const cwd = (input.cwd as string).trim();
+    const agentId = resolveCreateAgentId(input.agentId);
+    const firstPrompt =
       typeof input.firstPrompt === "string" &&
       input.firstPrompt.trim().length > 0
-    ) {
-      updates.push({
-        type: "set",
-        path: "firstPrompt",
-        value: input.firstPrompt.trim().slice(0, 200),
-      });
-    }
+        ? input.firstPrompt.trim().slice(0, 200)
+        : undefined;
 
-    if (updates.length > 0) {
-      await kv.update(KV.sessions, input.sessionId, updates);
-    }
+    const session: SessionRecord = {
+      id: input.sessionId,
+      project,
+      cwd,
+      startedAt: input.startedAt ?? now,
+      updatedAt: now,
+      status: "active",
+      observationCount: input.createObservationCount ?? 0,
+      ...(agentId ? { agentId } : {}),
+      ...(firstPrompt ? { firstPrompt } : {}),
+    };
 
-    const session =
-      (await kv.get<SessionRecord>(KV.sessions, input.sessionId)) ?? existing;
-    return { ok: true, created: false, session };
-  }
-
-  if (!hasProjectAndCwd(input.project, input.cwd)) {
-    return { ok: false, reason: "missing_project_cwd" };
-  }
-
-  const project = (input.project as string).trim();
-  const cwd = (input.cwd as string).trim();
-  const agentId = resolveCreateAgentId(input.agentId);
-  const firstPrompt =
-    typeof input.firstPrompt === "string" && input.firstPrompt.trim().length > 0
-      ? input.firstPrompt.trim().slice(0, 200)
-      : undefined;
-
-  const session: SessionRecord = {
-    id: input.sessionId,
-    project,
-    cwd,
-    startedAt: input.startedAt ?? now,
-    updatedAt: now,
-    status: "active",
-    observationCount: input.createObservationCount ?? 0,
-    ...(agentId ? { agentId } : {}),
-    ...(firstPrompt ? { firstPrompt } : {}),
-  };
-
-  await kv.set(KV.sessions, input.sessionId, session);
-  return { ok: true, created: true, session };
+    await kv.set(KV.sessions, input.sessionId, session);
+    return { ok: true, created: true, session };
+  });
 }

@@ -131,4 +131,52 @@ describe("ensureSession", () => {
     if (!result.ok) return;
     expect(result.session.agentId).toBe("env-agent");
   });
+
+  it("serializes concurrent lazy creates so a later create cannot wipe observationCount", async () => {
+    const { ensureSession } = await import("../src/functions/ensure-session.js");
+    const kv = mockKV();
+    const originalSet = kv.set.bind(kv);
+    let setCalls = 0;
+    kv.set = async <T>(scope: string, key: string, data: T): Promise<T> => {
+      setCalls += 1;
+      await new Promise((r) => setTimeout(r, 25));
+      return originalSet(scope, key, data);
+    };
+
+    const [observeCreate, summarizeCreate] = await Promise.all([
+      ensureSession(kv as never, {
+        sessionId: "ses_race",
+        project: "/workspace",
+        cwd: "/workspace",
+        agentId: "cursor",
+        createObservationCount: 1,
+      }),
+      ensureSession(kv as never, {
+        sessionId: "ses_race",
+        project: "/workspace",
+        cwd: "/workspace",
+        agentId: "cursor",
+        createObservationCount: 0,
+      }),
+    ]);
+
+    expect(observeCreate.ok).toBe(true);
+    expect(summarizeCreate.ok).toBe(true);
+    if (!observeCreate.ok || !summarizeCreate.ok) return;
+
+    // One create (kv.set) + one touch (kv.update) — never two overwriting sets.
+    expect(setCalls).toBe(1);
+    expect([observeCreate.created, summarizeCreate.created].sort()).toEqual([
+      false,
+      true,
+    ]);
+
+    const session = (await kv.get("mem:sessions", "ses_race")) as Record<
+      string,
+      unknown
+    >;
+    // Whichever create won the lock keeps its count; the loser must not overwrite.
+    expect(session.observationCount).toBe(observeCreate.created ? 1 : 0);
+    expect(session.agentId).toBe("cursor");
+  });
 });
