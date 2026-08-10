@@ -1,0 +1,20 @@
+---
+description: Cloud agent, autonomous delivery
+alwaysApply: true
+metadata:
+  environments: cloud
+  human: false
+---
+
+**Setup and services:** follow **`README.md`** and **`AGENTS.md`**. Below is only what differs in the cloud environment.
+
+## Environment
+
+- Secrets usually come from the Cursor dashboard.
+- If env vars fail, notify the user and stop.
+- **Do not** create `.env` files in the cloud.
+
+## Runtime
+
+- No local Docker services — install with `npm install --legacy-peer-deps` (lockfiles are gitignored; do not use `npm ci`).
+- Typical validation: `npm run build`, `npm run skills:check`, `npm test` (iii-sdk is mocked in unit tests).

@@ -1,0 +1,22 @@
+---
+description: Agent context and workflow
+alwaysApply: true
+---
+
+# Agent instructions
+
+**Read `README.md` first** for why this Cursor fork exists and its goals.
+**Read `AGENTS.md`** for architecture, consistency rules, code patterns, and testing.
+If docs and code disagree, trust code and update docs in the same change.
+If anything is unclear or instructions conflict, STOP and ask.
+
+## Code and verification
+
+After you finish, run `npm run build`, `npm run skills:check`, and `npm test` when relevant.
+Write simple, minimal code.
+Prefer existing patterns.
+Do not add unrequested features or APIs.
+
+## Upstream merges
+
+This is a fork. Keep changes minimal and localized so later pulls from upstream stay manageable — avoid drive-by refactors, formatting churn, and unrelated file touch-ups.
