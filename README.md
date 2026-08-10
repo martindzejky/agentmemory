@@ -21,9 +21,10 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 - **Conversations are open-ended streams.** A conversation or session ID helps grouping when you have one. Ingest must not require `sessionStart`, `sessionEnd`, or a session ID. There is no useful `active` or `completed` state. People come back later.
 - **Drive processing with watermarks.** Track progress with fields like `lastEventAt`, `lastSummarizedEventId`, `lastReflectedEventId`, and `summaryRevision`. Summarization, reflection, graph extraction, consolidation, crystallization, and skill extraction all run incrementally. None of them wait for a completed session.
 - **Trigger work from signals, not session end.** Run at turn boundaries, after idle time, after event or token thresholds, on an explicit flush, and from a periodic recovery sweep. Do not call an LLM on every observation. If Cursor Cloud skips a hook, memory formation must still catch up later.
-- **`/session/end` only flushes.** Keep it as a deprecated, stateless flush for old clients. It must not close the conversation or reject later events. If the UI needs an archive flag, that is a user action, not an ingest state.
+- **`/session/end` is a deprecated noop.** Keep the route for old clients. It must not close the conversation, stamp completed, fan out processing, or reject later events. If the UI needs an archive flag, that is a user action, not an ingest state.
 - **Keep host adapters thin.** They translate hook payloads into the shared envelope. They do not paper over server gaps with prompt caches or fake tool events. Skip agent thoughts by default. Keep prompts, final responses, decisions, and useful tool outcomes.
 
 ## Current fork progress
 
 - **Session start is optional.** `/observe`, `/summarize`, and `/enrich` lazy-create a session when `sessionId` + `project` + `cwd` arrive without a prior `/session/start`. Request `agentId` is honored on that create (e.g. `"cursor"`); `/session/start` still works for clients that call it.
+- **Pass B — `/session/end` deprecated noop.** Sessions are not closed by ingest lifecycle (`api::session::end` / `event::session::ended` do not stamp `completed` / `endedAt` or fan out stopped work). Start remains optional (Pass A).

@@ -92,15 +92,15 @@ describe("agentmemory integration", () => {
       expect(body.success).toBe(true);
     });
 
-    it("session is marked completed", async () => {
+    it("session stays active after deprecated /session/end noop", async () => {
       const res = await fetch(url("/agentmemory/sessions"));
       const body = (await json(res)) as {
         sessions: Array<{ id: string; status: string; endedAt?: string }>;
       };
       const session = body.sessions.find((s) => s.id === SESSION_ID);
       expect(session).toBeDefined();
-      expect(session!.status).toBe("completed");
-      expect(session!.endedAt).toBeDefined();
+      expect(session!.status).toBe("active");
+      expect(session!.endedAt).toBeUndefined();
     });
   });
 

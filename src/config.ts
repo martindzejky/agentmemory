@@ -450,7 +450,7 @@ export function getConsolidationDecayDays(): number {
 }
 
 // Cooldown between corpus consolidations triggered by session stop. The Stop
-// hook fires per agent turn and posts /session/end, so without this every turn
+// handler may still be invoked by recovery/evict bursts, so without this every call
 // would kick a full LLM semantic-merge + reflect + crystallize. Debounced to at
 // most once per window. Set to 0 to disable the debounce (consolidate on every
 // stop). Default 5 minutes.

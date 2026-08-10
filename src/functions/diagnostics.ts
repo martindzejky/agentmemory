@@ -40,7 +40,6 @@ const ALL_CATEGORIES = [
   "mesh",
 ];
 
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
 export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
@@ -289,33 +288,15 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
 
       if (categories.includes("sessions")) {
         const sessions = await kv.list<Session>(KV.sessions);
-        let sessionIssues = 0;
-
-        for (const session of sessions) {
-          if (
-            session.status === "active" &&
-            now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS
-          ) {
-            checks.push({
-              name: `abandoned-session:${session.id}`,
-              category: "sessions",
-              status: "warn",
-              message: `Session ${session.id} has been active for over 24 hours`,
-              fixable: false,
-            });
-            sessionIssues++;
-          }
-        }
-
-        if (sessionIssues === 0) {
-          checks.push({
-            name: "sessions-ok",
-            category: "sessions",
-            status: "pass",
-            message: `All ${sessions.length} sessions are healthy`,
-            fixable: false,
-          });
-        }
+        // Open-ended Cursor conversations stay active for days; do not warn
+        // on long-lived active status as "abandoned".
+        checks.push({
+          name: "sessions-ok",
+          category: "sessions",
+          status: "pass",
+          message: `All ${sessions.length} sessions are healthy`,
+          fixable: false,
+        });
       }
 
       if (categories.includes("memories")) {
