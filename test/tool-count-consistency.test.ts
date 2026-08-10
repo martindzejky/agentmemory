@@ -30,23 +30,27 @@ describe("Tool count consistency", () => {
   });
 
   it("core tool count derives from the registry", () => {
-    const coreCount = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
+    const coreCount = getAllTools().filter((t) =>
+      ESSENTIAL_TOOLS.has(t.name),
+    ).length;
     expect(coreCount).toBe(ESSENTIAL_TOOLS.size);
     expect(coreCount).toBeGreaterThan(0);
   });
 
-  it("README advertises the same tool count as the registry", () => {
+  it("fork README points at the upstream product README", () => {
     const readme = readText("README.md");
-    expect(readme).toContain(`${EXPECTED_TOOL_COUNT} MCP tools`);
-    expect(readme).not.toContain("51 MCP tools");
+    expect(readme).toContain(
+      "https://github.com/rohitg00/agentmemory/blob/main/README.md",
+    );
   });
 
   it("skill count claims match the plugin/skills directory", () => {
     const skillCount = readdirSync(join(ROOT, "plugin", "skills"), {
       withFileTypes: true,
     }).filter((e) => e.isDirectory() && e.name !== "_shared").length;
-    expect(readText("src/cli/connect/index.ts")).toContain(`${skillCount} skills`);
-    expect(readText("README.md")).toContain(`${skillCount} skills`);
+    expect(readText("src/cli/connect/index.ts")).toContain(
+      `${skillCount} skills`,
+    );
     expect(readText("AGENTS.md")).toContain(`12 hooks, ${skillCount} skills`);
     expect(readText("plugin/plugin.json")).toContain(`${skillCount} skills`);
   });

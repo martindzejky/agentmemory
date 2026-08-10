@@ -1,0 +1,44 @@
+name: Upstream check
+
+# Weekly (and manual) check that this fork still includes upstream/main.
+# Fails when we are behind so GitHub notifies on the run.
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compare with upstream
+        env:
+          UPSTREAM_URL: https://github.com/rohitg00/agentmemory.git
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          behind=$(git rev-list --count HEAD..upstream/main)
+          ahead=$(git rev-list --count upstream/main..HEAD)
+          compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/master...rohitg00:agentmemory:main"
+          {
+            echo "## Upstream check"
+            echo ""
+            echo "- Behind \`rohitg00/agentmemory@main\`: **${behind}** commit(s)"
+            echo "- Ahead of upstream: **${ahead}** commit(s)"
+            echo "- Compare: ${compare_url}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$behind" -gt 0 ]; then
+            echo "::warning title=Behind upstream::${behind} commit(s) on upstream main are missing from this fork. ${compare_url}"
+            echo "Fork is behind upstream by ${behind} commit(s): ${compare_url}" >&2
+            exit 1
+          fi
+          echo "Fork includes all of upstream/main."

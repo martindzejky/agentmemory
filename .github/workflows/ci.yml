@@ -5,7 +5,7 @@ name: CI
 # `workflow_dispatch` gives a manual re-run button for flake debugging.
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - "README.md"
       - "CHANGELOG.md"
@@ -18,7 +18,7 @@ on:
       - "**/*.md"
       - "**/*.mdx"
   pull_request:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - "README.md"
       - "CHANGELOG.md"
@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
 
 # Cancel in-flight PR runs when a force-push lands. Keep push runs to
-# protect against partial state on main.
+# protect against partial state on master.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

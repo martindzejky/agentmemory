@@ -21,7 +21,6 @@ function countRestApiEndpoints(): number {
 }
 
 describe("Consistency checks", () => {
-  const toolCount = getAllTools().length;
   const restEndpointCount = countRestApiEndpoints();
 
   it("version.ts matches package.json", () => {
@@ -49,21 +48,11 @@ describe("Consistency checks", () => {
     expect(src).toContain(`"${VERSION}"`);
   });
 
-  it("README mentions correct MCP tool count", () => {
-    const readme = readText("README.md");
-    const toolCountPattern = new RegExp(`${toolCount}\\s+MCP tools`);
-    expect(readme).toMatch(toolCountPattern);
-    const toolResourcePattern = new RegExp(`${toolCount}\\s+tools,\\s+6\\s+resources`);
-    expect(readme).toMatch(toolResourcePattern);
-  });
-
   it("documented REST endpoint counts match registered API paths", () => {
-    const readme = readText("README.md");
     const agents = readText("AGENTS.md");
     const index = readText("src/index.ts");
 
     expect(restEndpointCount).toBeGreaterThan(0);
-    expect(readme).toContain(`${restEndpointCount} endpoints on port`);
     expect(agents).toContain(`${restEndpointCount} REST endpoints`);
     expect(index).toContain(`REST API: ${restEndpointCount} endpoints`);
   });
