@@ -2,9 +2,24 @@ ARG III_VERSION=0.11.2
 
 FROM iiidev/iii:${III_VERSION} AS iii-image
 
+# Build @agentmemory/agentmemory from this repository and pack it so the
+# runtime stage can install a local tarball instead of the npm registry.
+FROM node:22-slim AS build
+
+WORKDIR /src
+COPY package.json ./
+COPY tsconfig.json tsdown.config.ts ./
+COPY iii-config.yaml iii-config.docker.yaml docker-compose.yml .env.example ./
+COPY src ./src
+COPY plugin ./plugin
+COPY LICENSE README.md AGENTS.md ./
+RUN npm install --no-fund --no-audit \
+ && npm run build \
+ && npm pack --pack-destination /tmp \
+ && mv /tmp/agentmemory-agentmemory-*.tgz /tmp/agentmemory.tgz
+
 FROM node:22-slim
 
-ARG AGENTMEMORY_VERSION=0.9.29
 ARG III_VERSION=0.11.2
 ARG III_SDK_VERSION=0.11.2
 
@@ -21,14 +36,16 @@ COPY --from=iii-image /app/iii /usr/local/bin/iii
 # is not refactored for yet). `npm install -g` ignores overrides, hence
 # the local prefix.
 WORKDIR /opt/agentmemory
+COPY --from=build /tmp/agentmemory.tgz /tmp/agentmemory.tgz
 RUN printf '{"name":"agentmemory-deploy","version":"1.0.0","private":true,"overrides":{"iii-sdk":"%s"}}\n' "${III_SDK_VERSION}" > package.json \
- && npm install "@agentmemory/agentmemory@${AGENTMEMORY_VERSION}" --omit=optional --no-fund --no-audit \
+ && npm install /tmp/agentmemory.tgz --omit=optional --no-fund --no-audit \
+ && rm -f /tmp/agentmemory.tgz \
  && ln -s /opt/agentmemory/node_modules/.bin/agentmemory /usr/local/bin/agentmemory
 
 ENV AGENTMEMORY_III_VERSION=${III_VERSION} \
     TINI_SUBREAPER=1
 
-COPY --chmod=0755 entrypoint.sh /usr/local/bin/agentmemory-entrypoint.sh
+COPY --chmod=0755 deploy/railway/entrypoint.sh /usr/local/bin/agentmemory-entrypoint.sh
 
 EXPOSE 3111
 
