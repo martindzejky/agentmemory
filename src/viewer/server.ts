@@ -116,9 +116,11 @@ export function isHostAllowed(
 
 // When bind is non-loopback the viewer is a bearer-authorized proxy
 // reachable from the network, so every request that would forward
-// upstream must also present the same bearer. Static routes (HTML,
-// favicon) stay open so a browser can fetch the shell — the JS inside
-// then has to provide a bearer for the API calls.
+// upstream must also present a bearer. Inbound auth uses
+// AGENTMEMORY_VIEWER_PROXY_SECRET when set, otherwise AGENTMEMORY_SECRET.
+// Upstream proxy calls always use AGENTMEMORY_SECRET. Static routes
+// (HTML, favicon) stay open so a browser can fetch the shell — the JS
+// inside then has to provide a bearer for the API calls.
 export function requireInboundBearer(
   authHeader: string | string[] | undefined,
   secret: string,
@@ -217,7 +219,7 @@ export function startViewerServer(
   if (!isLoopbackHost(host)) {
     if (!secret) {
       throw new ViewerConfigError(
-        `AGENTMEMORY_VIEWER_HOST=${host} requires AGENTMEMORY_SECRET to be set so the viewer can validate inbound bearer tokens. To fix: unset AGENTMEMORY_VIEWER_HOST to keep the safe loopback bind, or set AGENTMEMORY_SECRET. For Fly images, it is printed on first boot; see deploy/fly/README.md.`,
+        `AGENTMEMORY_VIEWER_HOST=${host} requires AGENTMEMORY_SECRET to be set so the viewer can validate inbound bearer tokens (optional AGENTMEMORY_VIEWER_PROXY_SECRET overrides the inbound bearer only; upstream REST calls still use AGENTMEMORY_SECRET). To fix: unset AGENTMEMORY_VIEWER_HOST to keep the safe loopback bind, or set AGENTMEMORY_SECRET. For Fly images, it is printed on first boot; see deploy/fly/README.md.`,
       );
     }
     if (readAllowedHostsOverride().length === 0) {
@@ -225,7 +227,8 @@ export function startViewerServer(
         `AGENTMEMORY_VIEWER_HOST=${host} requires VIEWER_ALLOWED_HOSTS because non-loopback viewer binds only trust explicit Host headers. To fix: set VIEWER_ALLOWED_HOSTS to a comma-separated list of trusted Host header values (e.g. "localhost:3113" for fly proxy), or unset AGENTMEMORY_VIEWER_HOST to keep the safe loopback bind.`,
       );
     }
-    inboundSecret = secret;
+    inboundSecret =
+      process.env.AGENTMEMORY_VIEWER_PROXY_SECRET?.trim() || secret;
   }
 
   // Computed lazily on first request — `port` may be 0 here (OS-assigned)
