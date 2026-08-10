@@ -1,5 +1,9 @@
 # agentmemory — Agent Instructions
 
+## Docs
+
+`README.md` in this fork is purpose-made for the Cursor-oriented fork (why it exists, goals). Do not put product stats, install guides, or tool/endpoint catalogs there. Upstream keeps the full product README: https://github.com/rohitg00/agentmemory/blob/main/README.md
+
 ## Architecture
 
 agentmemory is a persistent memory system for AI coding agents, built on iii-engine's three primitives (Worker/Function/Trigger). Everything goes through `registerFunction`/`registerTrigger`/`sdk.trigger()` — never bypass iii-engine with standalone SQLite or in-process alternatives.
@@ -17,14 +21,12 @@ agentmemory is a persistent memory system for AI coding agents, built on iii-eng
 3. `src/triggers/api.ts` — REST endpoint registration
 4. `src/index.ts` — function registration + endpoint count in the log line
 5. `test/mcp-standalone.test.ts` — tool count assertion
-6. `README.md` — tool counts (search for "MCP tools")
-7. `plugin/.claude-plugin/plugin.json` — tool count in description
-8. `plugin/plugin.json` and `plugin/.mcp.copilot.json` (when present) — tool count or MCP exposure
+6. `plugin/.claude-plugin/plugin.json` — tool count in description
+7. `plugin/plugin.json` and `plugin/.mcp.copilot.json` (when present) — tool count or MCP exposure
 
 **When adding REST endpoints, you MUST update:**
 1. `src/triggers/api.ts` — endpoint registration
 2. `src/index.ts` — endpoint count in the log line
-3. `README.md` — endpoint count (search for "REST endpoints" and "endpoints on port")
 
 **When bumping version, you MUST update ALL of the following:**
 1. `package.json` — version field
