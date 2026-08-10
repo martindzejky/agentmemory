@@ -252,6 +252,49 @@ describe("startViewerServer host binding", () => {
     expect(goodBearer.status).not.toBe(401);
   });
 
+  it("uses AGENTMEMORY_VIEWER_PROXY_SECRET for inbound auth when set", async () => {
+    const prev = process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
+    process.env.AGENTMEMORY_VIEWER_HOST = "0.0.0.0";
+    process.env.VIEWER_ALLOWED_HOSTS = "placeholder";
+    process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = "viewer-proxy-secret";
+    const apiSecret = "api-secret-xyz";
+
+    let seenAuth: string | undefined;
+    const upstream = createServer((req, res) => {
+      seenAuth = req.headers.authorization;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", resolve),
+    );
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+
+    try {
+      server = startViewerServer(0, null, null, apiSecret, upstreamPort);
+      await waitForListening(server);
+      const addr = server.address() as AddressInfo;
+      process.env.VIEWER_ALLOWED_HOSTS = `127.0.0.1:${addr.port}`;
+
+      const apiBearer = await fetch(
+        `http://127.0.0.1:${addr.port}/agentmemory/livez`,
+        { headers: { Authorization: `Bearer ${apiSecret}` } },
+      );
+      expect(apiBearer.status).toBe(401);
+
+      const proxyBearer = await fetch(
+        `http://127.0.0.1:${addr.port}/agentmemory/livez`,
+        { headers: { Authorization: "Bearer viewer-proxy-secret" } },
+      );
+      expect(proxyBearer.status).toBe(200);
+      expect(seenAuth).toBe(`Bearer ${apiSecret}`);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      if (prev === undefined) delete process.env.AGENTMEMORY_VIEWER_PROXY_SECRET;
+      else process.env.AGENTMEMORY_VIEWER_PROXY_SECRET = prev;
+    }
+  });
+
   it("does not require inbound auth on the loopback default bind", async () => {
     delete process.env.AGENTMEMORY_VIEWER_HOST;
     delete process.env.VIEWER_ALLOWED_HOSTS;

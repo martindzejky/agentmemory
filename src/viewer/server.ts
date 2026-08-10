@@ -225,7 +225,9 @@ export function startViewerServer(
         `AGENTMEMORY_VIEWER_HOST=${host} requires VIEWER_ALLOWED_HOSTS because non-loopback viewer binds only trust explicit Host headers. To fix: set VIEWER_ALLOWED_HOSTS to a comma-separated list of trusted Host header values (e.g. "localhost:3113" for fly proxy), or unset AGENTMEMORY_VIEWER_HOST to keep the safe loopback bind.`,
       );
     }
-    inboundSecret = secret;
+    // Optional distinct inbound bearer; upstream REST still uses `secret`.
+    inboundSecret =
+      process.env.AGENTMEMORY_VIEWER_PROXY_SECRET?.trim() || secret;
   }
 
   // Computed lazily on first request — `port` may be 0 here (OS-assigned)
