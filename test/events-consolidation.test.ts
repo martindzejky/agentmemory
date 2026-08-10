@@ -224,7 +224,7 @@ describe("session-end hook no longer double-fires consolidation", () => {
     expect(src).not.toContain("CONSOLIDATION_ENABLED");
   });
 
-  it("still POSTs /agentmemory/session/end (the single source of truth path)", () => {
+  it("still POSTs /agentmemory/session/end (deprecated compatibility path)", () => {
     expect(src).toContain("/agentmemory/session/end");
   });
 
@@ -255,11 +255,10 @@ function persistentKV() {
   };
 }
 
-// Regression: the Stop hook posts /session/end on every agent turn, which fires
-// event::session::stopped. consolidate-pipeline + auto-crystallize are full
-// corpus LLM work with no internal "nothing changed" guard, so firing them per
-// turn is a cost/latency storm for connected agents (Claude/Codex/Copilot/
-// Hermes). The debounce bounds corpus consolidation to once per cooldown.
+// Regression: event::session::stopped may still be invoked by eviction /
+// recovery (and future flush paths). consolidate-pipeline + auto-crystallize
+// are full-corpus LLM work with no internal "nothing changed" guard, so the
+// debounce bounds corpus consolidation to once per cooldown.
 describe("session-stop consolidation debounce", () => {
   beforeEach(() => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);

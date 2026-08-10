@@ -65,10 +65,10 @@ describe("skill-extract", () => {
     expect(result.error).toContain("session not found");
   });
 
-  it("skill-extract parses LLM response into ProceduralMemory", async () => {
+  it("skill-extract works on an active session when other requirements are met", async () => {
     mockKv.get.mockImplementation((scope: string, key: string) => {
       if (scope === "mem:sessions")
-        return Promise.resolve({ id: "s1", project: "test", status: "completed" });
+        return Promise.resolve({ id: "s1", project: "test", status: "active" });
       if (scope === "mem:summaries")
         return Promise.resolve({
           sessionId: "s1",
@@ -124,7 +124,7 @@ describe("skill-extract", () => {
 
   it("skill-extract returns no-skill for exploratory sessions", async () => {
     mockKv.get.mockImplementation((scope: string) => {
-      if (scope === "mem:sessions") return Promise.resolve({ id: "s1", project: "test", status: "completed" });
+      if (scope === "mem:sessions") return Promise.resolve({ id: "s1", project: "test", status: "active" });
       if (scope === "mem:summaries")
         return Promise.resolve({
           sessionId: "s1",

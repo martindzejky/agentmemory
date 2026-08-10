@@ -1,4 +1,4 @@
-import { TriggerAction, type ISdk, type ApiRequest } from "iii-sdk";
+import { type ISdk, type ApiRequest } from "iii-sdk";
 import type { Session, CompressedObservation, HookPayload, CommitLink, SessionSummary } from "../types.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV } from "../state/schema.js";
@@ -646,6 +646,10 @@ export function registerApiTriggers(
     },
   });
 
+  // Deprecated compatibility noop for upstream clients that still POST
+  // /session/end. Open-ended Cursor conversations must not be closed, stamped
+  // completed, or fan out event::session::stopped from this route. Eviction /
+  // stale recovery may still trigger event::session::stopped directly.
   sdk.registerFunction("api::session::end",
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
       const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
@@ -655,24 +659,7 @@ export function registerApiTriggers(
           body: { error: "sessionId is required and must be a non-empty string" },
         };
       }
-      await kv.update(KV.sessions, sessionId, [
-        { type: "set", path: "endedAt", value: new Date().toISOString() },
-        { type: "set", path: "status", value: "completed" },
-      ]);
-      // Fan out session-stopped lifecycle (non-blocking).
-      try {
-        sdk.trigger({
-          function_id: "event::session::stopped",
-          payload: { sessionId },
-          action: TriggerAction.Void(),
-        });
-      } catch (err) {
-        logger.warn("event::session::stopped trigger failed", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-      return { status_code: 200, body: { success: true } };
+      return { status_code: 200, body: { success: true, noop: true } };
     },
   );
   sdk.registerTrigger({

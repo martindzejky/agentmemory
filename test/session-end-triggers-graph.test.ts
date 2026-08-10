@@ -1,33 +1,51 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-// #666: api::session::end must publish the session-stopped lifecycle so
-// summarize + slot-reflect + graph extraction actually fire. Before this
-// fix the `event::session::stopped` handler in events.ts was a dead
-// subscriber — no code published `agentmemory.session.stopped`, so graph
-// nodes / lessons / crystals never materialized despite the handler
-// existing. Direct fire-and-forget trigger keeps the HTTP response fast
-// (kv.update runs synchronously, downstream pipeline fan-outs without
-// blocking).
-describe("api::session::end → event::session::stopped (#666)", () => {
+// Pass B: /session/end is a deprecated noop for open-ended Cursor chats.
+// It must not stamp completed/endedAt or fan out event::session::stopped.
+describe("api::session::end is a deprecated noop (Pass B)", () => {
   const api = readFileSync("src/triggers/api.ts", "utf-8");
+  const endHandler = api.match(
+    /registerFunction\("api::session::end"[\s\S]*?registerTrigger\(\{[\s\S]*?api_path:\s*"\/agentmemory\/session\/end"/,
+  )?.[0] ?? "";
 
-  it("api::session::end fires event::session::stopped after kv.update", () => {
-    expect(api).toMatch(
-      /api::session::end[\s\S]*?kv\.update\(KV\.sessions[\s\S]*?function_id:\s*"event::session::stopped"/,
-    );
+  it("keeps the /agentmemory/session/end route", () => {
+    expect(api).toContain('api_path: "/agentmemory/session/end"');
   });
 
-  it("event::session::stopped trigger payload includes sessionId", () => {
-    expect(api).toMatch(
-      /function_id:\s*"event::session::stopped",\s*payload:\s*\{\s*sessionId\s*\}/,
-    );
+  it("does not stamp endedAt or completed status", () => {
+    expect(endHandler).not.toContain('path: "endedAt"');
+    expect(endHandler).not.toContain('value: "completed"');
+    expect(endHandler).not.toContain("kv.update");
   });
 
-  it("event::session::stopped uses TriggerAction.Void for fire-and-forget", () => {
-    expect(api).toMatch(
-      /function_id:\s*"event::session::stopped"[\s\S]*?action:\s*TriggerAction\.Void\(\)/,
-    );
+  it("does not trigger event::session::stopped", () => {
+    expect(endHandler).not.toContain('function_id: "event::session::stopped"');
+  });
+
+  it("returns success with noop", () => {
+    expect(endHandler).toMatch(/success:\s*true,\s*noop:\s*true/);
+  });
+});
+
+describe("event::session::ended is a deprecated noop (Pass B)", () => {
+  const events = readFileSync("src/triggers/events.ts", "utf-8");
+  const endedHandler = events.match(
+    /registerFunction\(\s*"event::session::ended"[\s\S]*?registerTrigger\(\{[\s\S]*?topic:\s*"agentmemory\.session\.ended"/,
+  )?.[0] ?? "";
+
+  it("keeps the agentmemory.session.ended subscriber", () => {
+    expect(events).toContain('topic: "agentmemory.session.ended"');
+  });
+
+  it("does not stamp endedAt or completed status", () => {
+    expect(endedHandler).not.toContain('path: "endedAt"');
+    expect(endedHandler).not.toContain('value: "completed"');
+    expect(endedHandler).not.toContain("kv.update");
+  });
+
+  it("returns success with noop", () => {
+    expect(endedHandler).toMatch(/success:\s*true,\s*noop:\s*true/);
   });
 });
 

@@ -117,12 +117,6 @@ export function registerSkillExtractFunctions(
       if (!session) {
         return { success: false, error: "session not found" };
       }
-      if (session.status !== "completed") {
-        return {
-          success: false,
-          error: "session must be completed before skill extraction",
-        };
-      }
 
       const [summary, observations] = await Promise.all([
         kv.get<SessionSummary>(KV.summaries, data.sessionId).catch(() => null),

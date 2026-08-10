@@ -386,7 +386,7 @@ describe("Diagnostics Functions", () => {
       expect(check!.fixable).toBe(true);
     });
 
-    it("active session older than 24h produces warn", async () => {
+    it("long-lived active session stays healthy (no abandoned warn)", async () => {
       const session = makeSession({
         status: "active",
         startedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
@@ -397,12 +397,13 @@ describe("Diagnostics Functions", () => {
         categories: ["sessions"],
       })) as { checks: DiagnosticCheck[] };
 
-      const check = result.checks.find((c) =>
+      const abandoned = result.checks.find((c) =>
         c.name.startsWith("abandoned-session:"),
       );
-      expect(check).toBeDefined();
-      expect(check!.status).toBe("warn");
-      expect(check!.fixable).toBe(false);
+      expect(abandoned).toBeUndefined();
+      const ok = result.checks.find((c) => c.name === "sessions-ok");
+      expect(ok).toBeDefined();
+      expect(ok!.status).toBe("pass");
     });
 
     it("memory with stale isLatest produces fail (fixable)", async () => {

@@ -12,7 +12,7 @@ import {
 import { logger } from "../logger.js";
 
 // Global marker recording when corpus consolidation last ran, used to debounce
-// the per-turn session-stop fan-out.
+// event::session::stopped fan-out (evict/recovery and future flush callers).
 const CONSOLIDATION_MARKER_KEY = "consolidation:lastRun";
 
 async function consolidationDueUnserialized(kv: StateKV): Promise<boolean> {
@@ -128,10 +128,10 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         });
       }
     }
-    // Crystals + lessons consolidation. The stop lifecycle is the single
-    // source of truth: event::session::stopped fires for ALL agents (the
-    // client-side session-end hook no longer drives consolidation directly).
-    // Gated so keyless/zero-LLM users don't fire no-op LLM calls.
+    // Crystals + lessons consolidation for non-end callers (evict / stale
+    // recovery, and any future flush path). /session/end is a deprecated noop
+    // and must not drive this handler. Gated so keyless/zero-LLM users don't
+    // fire no-op LLM calls.
     //
     // skipConsolidation suppresses the fan-out when this handler is driven
     // by eviction's stale-session recovery: evict calls session::stopped
@@ -139,11 +139,9 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     // Without this guard, N recovered sessions launch N concurrent forced
     // full-corpus consolidations plus N crystallizations.
     //
-    // Debounce: /session/end is posted by the per-turn Stop hook, so this
-    // handler fires on every agent turn. consolidate-pipeline + auto-crystallize
-    // are full-corpus LLM work with no internal "nothing changed" guard, so
-    // firing them every turn is a cost/latency storm for connected agents.
-    // Bound the global corpus consolidation to once per cooldown window.
+    // Debounce: consolidate-pipeline + auto-crystallize are full-corpus LLM
+    // work with no internal "nothing changed" guard. Bound the global corpus
+    // consolidation to once per cooldown window when stopped is invoked.
     if (isConsolidationEnabled() && !data.skipConsolidation) {
       if (await consolidationDue(kv)) {
         fireVoid("mem::consolidate-pipeline", { tier: "all", force: true });
@@ -158,14 +156,12 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     config: { topic: "agentmemory.session.stopped" },
   });
 
+  // Deprecated compatibility noop. Nothing should close a session via this
+  // topic; keep the subscriber so publishers (if any) do not stamp completed.
   sdk.registerFunction(
     "event::session::ended",
-    async (data: { sessionId: string }) => {
-      await kv.update(KV.sessions, data.sessionId, [
-        { type: "set", path: "endedAt", value: new Date().toISOString() },
-        { type: "set", path: "status", value: "completed" },
-      ]);
-      return { success: true };
+    async (_data: { sessionId: string }) => {
+      return { success: true, noop: true };
     },
   );
   sdk.registerTrigger({
