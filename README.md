@@ -14,6 +14,7 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 
 ## Goals
 
+- **Stay compatible with upstream.** Prefer small, additive changes. No breaking changes or big rewrites. The point of this fork is Cursor compatibility and first-class Cursor support while adhering to upstream as much as possible.
 - **Cursor is a real host.** Stop adapting Cursor to look like Claude Code.
 - **Keep an immutable raw event log.** Store `user_prompt`, `assistant_response`, `tool_call`, `tool_result`, `subagent`, and `compaction` as their own event types. Do not rewrite conversation messages as tool observations. Summaries and memories are derived views. They must never overwrite the source, so you can rerun summarization later.
 - **Idempotency uses client event IDs.** Each event gets a stable client-generated ID. Retrying the same ID is a no-op. Two different IDs with the same content both stay. Drop ingest dedup by session, content, or short time windows. Semantic dedup belongs on derived memories.
