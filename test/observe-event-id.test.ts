@@ -7,7 +7,6 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { DedupMap } from "../src/functions/dedup.js";
-import type { CompressedObservation, RawObservation } from "../src/types.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -172,29 +171,6 @@ describe("mem::observe eventId idempotency", () => {
     expect(loggerWarn).toHaveBeenCalled();
   });
 
-  it("stores eventId on the final CompressedObservation (default synthetic path)", async () => {
-    const { registerObserveFunction } = await import(
-      "../src/functions/observe.js"
-    );
-    const sdk = mockSdk();
-    const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
-
-    const result = (await sdk.trigger(
-      "mem::observe",
-      basePayload({ eventId: "evt_stored" }),
-    )) as { observationId: string };
-
-    // Default path overwrites the raw row with synthetic CompressedObservation;
-    // eventId must survive that overwrite.
-    const stored = await kv.get<CompressedObservation>(
-      "mem:obs:ses_event_id",
-      result.observationId,
-    );
-    expect(stored?.type).toBeDefined();
-    expect(stored?.eventId).toBe("evt_stored");
-  });
-
   it("allows the same eventId in two different sessions", async () => {
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"
@@ -275,24 +251,5 @@ describe("mem::observe eventId idempotency", () => {
     expect(a.observationId).not.toBe(b.observationId);
     expect(await kv.list("mem:obs:a:b")).toHaveLength(1);
     expect(await kv.list("mem:obs:a")).toHaveLength(1);
-  });
-});
-
-describe("buildSyntheticCompression eventId carry-through", () => {
-  it("copies eventId onto the synthetic CompressedObservation", async () => {
-    const { buildSyntheticCompression } = await import(
-      "../src/functions/compress-synthetic.js"
-    );
-    const raw: RawObservation = {
-      id: "obs_1",
-      sessionId: "ses_1",
-      timestamp: new Date().toISOString(),
-      hookType: "prompt_submit",
-      userPrompt: "hello",
-      raw: { prompt: "hello" },
-      eventId: "evt_synth",
-    };
-    const synth = buildSyntheticCompression(raw);
-    expect(synth.eventId).toBe("evt_synth");
   });
 });

@@ -88,7 +88,6 @@ export function registerObserveFunction(
         timestamp: payload.timestamp,
         hookType: payload.hookType,
         raw: sanitizedRaw,
-        ...(eventId ? { eventId } : {}),
       };
 
       let extractedImage: string | undefined;
@@ -217,7 +216,11 @@ export function registerObserveFunction(
           stream_name: STREAM.name,
           group_id: STREAM.group(payload.sessionId),
           item_id: obsId,
-          data: { type: "raw", observation: raw },
+          data: {
+            type: "raw",
+            observation: raw,
+            ...(eventId ? { eventId } : {}),
+          },
           },
         });
 
@@ -228,7 +231,12 @@ export function registerObserveFunction(
             group_id: STREAM.viewerGroup,
             id: `raw-${obsId}`,
             type: "raw_observation",
-            data: { type: "raw", observation: raw, sessionId: payload.sessionId },
+            data: {
+              type: "raw",
+              observation: raw,
+              sessionId: payload.sessionId,
+              ...(eventId ? { eventId } : {}),
+            },
           },
           action: TriggerAction.Void(),
         });

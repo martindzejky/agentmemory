@@ -44,8 +44,6 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
-  /** Client-supplied idempotency key; persisted when present. */
-  eventId?: string;
 }
 
 export interface CompressedObservation {
@@ -66,8 +64,6 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
-  /** Client-supplied idempotency key; carried from RawObservation. */
-  eventId?: string;
 }
 
 export type ObservationType =
