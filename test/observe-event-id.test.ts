@@ -240,6 +240,49 @@ describe("mem::observe eventId idempotency", () => {
     ).toBe("evt_stream");
   });
 
+  it("rewrites when the eventId index points at a missing raw row", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const first = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_stale" }),
+    )) as { observationId: string };
+
+    await kv.delete("mem:raw:ses_event_id", first.observationId);
+    await kv.delete("mem:obs:ses_event_id", first.observationId);
+
+    const staleIndex = await kv.get<EventIdIndexEntry>(
+      "mem:evt:ses_event_id",
+      "evt_stale",
+    );
+    expect(staleIndex?.observationId).toBe(first.observationId);
+
+    const retry = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_stale" }),
+    )) as {
+      observationId: string;
+      deduplicated?: boolean;
+    };
+
+    expect(retry.deduplicated).not.toBe(true);
+    expect(retry.observationId).toBeTruthy();
+    expect(retry.observationId).not.toBe(first.observationId);
+    expect(await kv.list("mem:raw:ses_event_id")).toHaveLength(1);
+    expect(await kv.list("mem:obs:ses_event_id")).toHaveLength(1);
+
+    const index = await kv.get<EventIdIndexEntry>(
+      "mem:evt:ses_event_id",
+      "evt_stale",
+    );
+    expect(index?.observationId).toBe(retry.observationId);
+  });
+
   it("allows the same eventId in two different sessions", async () => {
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"

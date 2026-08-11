@@ -141,12 +141,25 @@ export function registerObserveFunction(
             eventId,
           );
           if (existing) {
-            return {
-              deduplicated: true,
-              sessionId: payload.sessionId,
-              eventId,
-              observationId: existing.observationId,
-            };
+            const rawStillThere = await kv.get(
+              KV.rawEvents(payload.sessionId),
+              existing.observationId,
+            );
+            if (rawStillThere) {
+              return {
+                deduplicated: true,
+                sessionId: payload.sessionId,
+                eventId,
+                observationId: existing.observationId,
+              };
+            }
+            // Stale index (prune/clear failed, or race with forget): drop it
+            // and fall through so the retry can rewrite the event.
+            try {
+              await kv.delete(KV.eventIds(payload.sessionId), eventId);
+            } catch {
+              /* best-effort */
+            }
           }
         }
 
