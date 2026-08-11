@@ -369,14 +369,19 @@ export function registerSummarizeFunction(
               id: session.lastSummarizedEventId,
             }
           : undefined;
-      let { newItems } = splitByCursor(compressed, summarizeCursor);
+      let eligible = compressed;
       if (isAutoCompressEnabled()) {
-        newItems = truncateAwaitingLlmUpgrade(
-          newItems,
+        eligible = truncateAwaitingLlmUpgrade(
+          compressed,
           Date.now(),
           getCompressUpgradeGraceMs(),
         );
       }
+      if (eligible.length === 0) {
+        logger.info("Summarize skipped — nothing eligible yet", { sessionId });
+        return { success: true, skipped: true, reason: "nothing_new" };
+      }
+      const { newItems } = splitByCursor(eligible, summarizeCursor);
       const revision = session.summaryRevision ?? 0;
       const rebuildInterval = getSummaryRebuildInterval();
       const dueForRebuild =
@@ -398,7 +403,7 @@ export function registerSummarizeFunction(
         return { success: true, skipped: true, reason: "nothing_new" };
       }
 
-      const batch = useIncremental ? newItems : compressed;
+      const batch = useIncremental ? newItems : eligible;
       const totalObservationCount = compressed.length;
       const countToStamp =
         typeof session.observationCount === "number"
@@ -458,7 +463,7 @@ export function registerSummarizeFunction(
               provider,
               storedSummary,
               newPartial,
-              compressed.length - newItems.length,
+              totalObservationCount - newItems.length,
               newItems.length,
               totalObservationCount,
             );

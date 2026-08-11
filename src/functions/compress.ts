@@ -78,67 +78,67 @@ export function registerCompressFunction(
     }) => {
       const startMs = Date.now();
 
-      const storedRaw = await kv.get<RawObservation>(
-        KV.rawEvents(data.sessionId),
-        data.observationId,
-      );
-      const raw = storedRaw ?? data.raw;
-      if (!raw) {
-        logger.warn("Compress aborted — raw event not found", {
-          obsId: data.observationId,
-          sessionId: data.sessionId,
-        });
-        return { success: false, error: "raw_not_found" };
-      }
-
-      let imageDescription: string | undefined;
-      const hasImage = raw.modality === "image" || raw.modality === "mixed";
-
-      if (hasImage && raw.imageData && provider.describeImage) {
-        try {
-          let base64Data = raw.imageData;
-          let mimeType = "image/png";
-
-          if (!raw.imageData.startsWith("/9j/") && !raw.imageData.startsWith("iVBOR")) {
-            if (!isManagedImagePath(raw.imageData)) {
-              throw new Error(`Refusing to read image outside managed store: ${raw.imageData}`);
-            }
-            const fileBuffer = readFileSync(raw.imageData);
-            base64Data = fileBuffer.toString("base64");
-            if (raw.imageData.endsWith(".jpg") || raw.imageData.endsWith(".jpeg")) mimeType = "image/jpeg";
-            else if (raw.imageData.endsWith(".webp")) mimeType = "image/webp";
-            else if (raw.imageData.endsWith(".gif")) mimeType = "image/gif";
-          }
-
-          imageDescription = await provider.describeImage(base64Data, mimeType, VISION_DESCRIPTION_PROMPT);
-          logger.info("Image described by vision model", { obsId: data.observationId });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.warn("Vision model call failed, falling back to text-only compression", {
-            obsId: data.observationId,
-            error: msg,
-          });
-        }
-      }
-
-      const prompt = buildCompressionPrompt({
-        hookType: raw.hookType,
-        toolName: raw.toolName,
-        toolInput: raw.toolInput,
-        toolOutput: imageDescription
-          ? `[Image Description]: ${imageDescription}\n\n${raw.toolOutput ?? ""}`
-          : raw.toolOutput,
-        userPrompt: raw.userPrompt,
-        assistantResponse: raw.assistantResponse,
-        subagentId: raw.subagentId,
-        subagentType: raw.subagentType,
-        subagentTask: raw.subagentTask,
-        subagentStatus: raw.subagentStatus,
-        subagentSummary: raw.subagentSummary,
-        timestamp: raw.timestamp,
-      });
-
       try {
+        const storedRaw = await kv.get<RawObservation>(
+          KV.rawEvents(data.sessionId),
+          data.observationId,
+        );
+        const raw = storedRaw ?? data.raw;
+        if (!raw) {
+          logger.warn("Compress aborted — raw event not found", {
+            obsId: data.observationId,
+            sessionId: data.sessionId,
+          });
+          return { success: false, error: "raw_not_found" };
+        }
+
+        let imageDescription: string | undefined;
+        const hasImage = raw.modality === "image" || raw.modality === "mixed";
+
+        if (hasImage && raw.imageData && provider.describeImage) {
+          try {
+            let base64Data = raw.imageData;
+            let mimeType = "image/png";
+
+            if (!raw.imageData.startsWith("/9j/") && !raw.imageData.startsWith("iVBOR")) {
+              if (!isManagedImagePath(raw.imageData)) {
+                throw new Error(`Refusing to read image outside managed store: ${raw.imageData}`);
+              }
+              const fileBuffer = readFileSync(raw.imageData);
+              base64Data = fileBuffer.toString("base64");
+              if (raw.imageData.endsWith(".jpg") || raw.imageData.endsWith(".jpeg")) mimeType = "image/jpeg";
+              else if (raw.imageData.endsWith(".webp")) mimeType = "image/webp";
+              else if (raw.imageData.endsWith(".gif")) mimeType = "image/gif";
+            }
+
+            imageDescription = await provider.describeImage(base64Data, mimeType, VISION_DESCRIPTION_PROMPT);
+            logger.info("Image described by vision model", { obsId: data.observationId });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn("Vision model call failed, falling back to text-only compression", {
+              obsId: data.observationId,
+              error: msg,
+            });
+          }
+        }
+
+        const prompt = buildCompressionPrompt({
+          hookType: raw.hookType,
+          toolName: raw.toolName,
+          toolInput: raw.toolInput,
+          toolOutput: imageDescription
+            ? `[Image Description]: ${imageDescription}\n\n${raw.toolOutput ?? ""}`
+            : raw.toolOutput,
+          userPrompt: raw.userPrompt,
+          assistantResponse: raw.assistantResponse,
+          subagentId: raw.subagentId,
+          subagentType: raw.subagentType,
+          subagentTask: raw.subagentTask,
+          subagentStatus: raw.subagentStatus,
+          subagentSummary: raw.subagentSummary,
+          timestamp: raw.timestamp,
+        });
+
         const validator = (response: string) => {
           const parsed = parseCompressionXml(response);
           if (!parsed) return { valid: false, errors: ["xml_parse_failed"] };

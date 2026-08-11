@@ -560,5 +560,91 @@ describe("mem::summarize watermarks", () => {
       const session = (await kv.get("sessions", sessionId)) as Session;
       expect(session.lastSummarizedEventId).toBe("obs_2");
     });
+
+    it("gates full rebuilds so the watermark does not advance past a recent synthetic", async () => {
+      vi.mocked(getSummaryRebuildInterval).mockReturnValue(2);
+      const provider = makeProvider([summaryXml("full gated")]);
+      const oldLlm = "2026-01-01T10:00:00.000Z";
+      const midLlm = "2026-01-01T11:00:00.000Z";
+      const { handler, kv } = await setup({
+        observations: [
+          makeObs(1, sessionId, oldLlm, "llm"),
+          makeObs(2, sessionId, midLlm, "llm"),
+          makeObs(3, sessionId, recentTs(), "synthetic"),
+        ],
+        session: {
+          lastSummarizedEventAt: midLlm,
+          lastSummarizedEventId: "obs_2",
+          summarizedObservationCount: 3,
+          summaryRevision: 2,
+          observationCount: 3,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "stored",
+          narrative: "n",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 3,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result.success).toBe(true);
+      expect(provider.calls).toHaveLength(1);
+      expect(provider.calls[0]?.user).toContain("Session observations (2 total)");
+      expect(provider.calls[0]?.system).not.toContain("merging");
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_2");
+      expect(session.lastSummarizedEventAt).toBe(midLlm);
+      expect(session.summaryRevision).toBe(3);
+      const summary = (await kv.get("summaries", sessionId)) as SessionSummary;
+      expect(summary.observationCount).toBe(3);
+    });
+
+    it("returns nothing_new on a full rebuild when every row is still awaiting upgrade", async () => {
+      vi.mocked(getSummaryRebuildInterval).mockReturnValue(2);
+      const provider = makeProvider([summaryXml("unused")]);
+      const { handler, kv } = await setup({
+        observations: [makeObs(1, sessionId, recentTs(), "synthetic")],
+        session: {
+          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventId: "obs_0",
+          summarizedObservationCount: 1,
+          summaryRevision: 2,
+          observationCount: 1,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "stored",
+          narrative: "n",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 1,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        reason: "nothing_new",
+      });
+      expect(result.error).toBeUndefined();
+      expect(provider.calls).toHaveLength(0);
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_0");
+      expect(session.summaryRevision).toBe(2);
+    });
   });
 });
