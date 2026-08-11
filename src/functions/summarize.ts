@@ -405,6 +405,8 @@ export function registerSummarizeFunction(
 
       const batch = useIncremental ? newItems : eligible;
       const totalObservationCount = compressed.length;
+      const mergeTotalCount = eligible.length;
+      const mergePriorCount = mergeTotalCount - newItems.length;
       const countToStamp =
         typeof session.observationCount === "number"
           ? session.observationCount
@@ -463,9 +465,9 @@ export function registerSummarizeFunction(
               provider,
               storedSummary,
               newPartial,
-              totalObservationCount - newItems.length,
+              mergePriorCount,
               newItems.length,
-              totalObservationCount,
+              mergeTotalCount,
             );
             response = mergedXml;
             summary = parseSummaryXml(

@@ -452,18 +452,21 @@ describe("mem::summarize watermarks", () => {
         summaryXml("partial"),
         summaryXml("merged"),
       ]);
+      const priorTs = "2026-01-01T10:00:00.000Z";
       const llmTs = recentTs();
       const syntheticTs = new Date(Date.now() + 1000).toISOString();
       const { handler, kv } = await setup({
         observations: [
+          makeObs(1, sessionId, priorTs, "llm"),
           makeObs(2, sessionId, llmTs, "llm"),
           makeObs(3, sessionId, syntheticTs, "synthetic"),
         ],
         session: {
-          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventAt: priorTs,
           lastSummarizedEventId: "obs_1",
           summarizedObservationCount: 1,
           summaryRevision: 1,
+          observationCount: 3,
         },
         storedSummary: {
           sessionId,
@@ -483,8 +486,14 @@ describe("mem::summarize watermarks", () => {
 
       expect(result.success).toBe(true);
       expect(provider.calls[0]?.user).toContain("Session observations (1 total)");
+      expect(provider.calls[1]?.system).toContain("merging");
+      expect(provider.calls[1]?.user).toContain("obs 1-1");
+      expect(provider.calls[1]?.user).toContain("obs 2-2");
+      expect(provider.calls[1]?.user).not.toContain("obs 3-3");
       const session = (await kv.get("sessions", sessionId)) as Session;
       expect(session.lastSummarizedEventId).toBe("obs_2");
+      const summary = (await kv.get("summaries", sessionId)) as SessionSummary;
+      expect(summary.observationCount).toBe(3);
     });
 
     it("summarizes a synthetic row as-is once past the grace window", async () => {
