@@ -4,7 +4,12 @@ import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { recordAudit } from "./audit.js";
-import { getEnvVar } from "../config.js";
+import {
+  getCompressUpgradeGraceMs,
+  getEnvVar,
+  isAutoCompressEnabled,
+} from "../config.js";
+import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { logger } from "../logger.js";
 import {
   isAfterCursor,
@@ -391,11 +396,22 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       if (observations.length === 0) {
         return { success: true, applied: 0, reason: "no observations for session" };
       }
-      const hasNew = observations.some((obs) => isAfterCursor(obs, reflectCursor));
+      let eligible = observations;
+      if (isAutoCompressEnabled()) {
+        eligible = truncateAwaitingLlmUpgrade(
+          observations,
+          Date.now(),
+          getCompressUpgradeGraceMs(),
+        );
+      }
+      if (eligible.length === 0) {
+        return { success: true, applied: 0, reason: "nothing_new" };
+      }
+      const hasNew = eligible.some((obs) => isAfterCursor(obs, reflectCursor));
       if (reflectCursor && !hasNew) {
         return { success: true, applied: 0, reason: "nothing_new" };
       }
-      const recent = observations.slice(-max).reverse();
+      const recent = eligible.slice(-max).reverse();
 
       const pendingLines: string[] = [];
       const patternCounts = new Map<string, number>();
@@ -497,7 +513,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
         });
       }
 
-      const watermark = newestEventCursor(observations.filter((o) => o.title));
+      const watermark = newestEventCursor(eligible.filter((o) => o.title));
       if (watermark) {
         await withKeyedLock(`session:${sessionId}`, async () => {
           await kv.update(KV.sessions, sessionId, [

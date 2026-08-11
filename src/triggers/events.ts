@@ -6,9 +6,12 @@ import { isReflectEnabled } from "../functions/slots.js";
 import {
   getAgentId,
   getConsolidationCooldownMs,
+  getCompressUpgradeGraceMs,
+  isAutoCompressEnabled,
   isConsolidationEnabled,
   isGraphExtractionEnabled,
 } from "../config.js";
+import { truncateAwaitingLlmUpgrade } from "../functions/compress-upgrade-gate.js";
 import { logger } from "../logger.js";
 import { isAfterCursor, sortByEventCursor } from "../functions/event-cursor.js";
 
@@ -123,9 +126,18 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         const observations = await kv.list<CompressedObservation>(
           KV.observations(data.sessionId),
         );
-        const compressed = sortByEventCursor(
+        const titled = sortByEventCursor(
           observations.filter((o) => o.title),
-        ).filter((o) => isAfterCursor(o, graphCursor));
+        );
+        let eligible = titled;
+        if (isAutoCompressEnabled()) {
+          eligible = truncateAwaitingLlmUpgrade(
+            titled,
+            Date.now(),
+            getCompressUpgradeGraceMs(),
+          );
+        }
+        const compressed = eligible.filter((o) => isAfterCursor(o, graphCursor));
         if (compressed.length > 0) {
           sdk.trigger({
             function_id: "mem::graph-extract",

@@ -9,6 +9,8 @@ vi.mock("../src/config.js", () => ({
   getAgentId: vi.fn(() => undefined),
   isConsolidationEnabled: vi.fn(() => true),
   isGraphExtractionEnabled: vi.fn(() => false),
+  isAutoCompressEnabled: vi.fn(() => false),
+  getCompressUpgradeGraceMs: vi.fn(() => 300000),
   getConsolidationCooldownMs: vi.fn(() => 300000),
 }));
 
@@ -20,6 +22,7 @@ import { registerEventTriggers } from "../src/triggers/events.js";
 import {
   isConsolidationEnabled,
   isGraphExtractionEnabled,
+  isAutoCompressEnabled,
   getConsolidationCooldownMs,
 } from "../src/config.js";
 import { isReflectEnabled } from "../src/functions/slots.js";
@@ -81,6 +84,7 @@ describe("event::session::stopped consolidation fan-out", () => {
   beforeEach(() => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
     vi.mocked(isGraphExtractionEnabled).mockReturnValue(false);
+    vi.mocked(isAutoCompressEnabled).mockReturnValue(false);
     vi.mocked(isReflectEnabled).mockReturnValue(false);
     vi.mocked(logger.warn).mockClear();
   });
@@ -185,6 +189,38 @@ describe("event::session::stopped consolidation fan-out", () => {
     registerEventTriggers(on.sdk as never, mockKV() as never);
     await on.handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
     expect(functionIds(on.trigger)).toContain("mem::slot-reflect");
+  });
+
+  it("does not fire graph-extract when auto-compress gates away new observations", async () => {
+    vi.mocked(isGraphExtractionEnabled).mockReturnValue(true);
+    vi.mocked(isAutoCompressEnabled).mockReturnValue(true);
+    vi.mocked(isConsolidationEnabled).mockReturnValue(false);
+    const kv = mockKV();
+    vi.mocked(kv.get).mockResolvedValue({
+      id: "ses_1",
+      lastGraphExtractedEventAt: "2026-01-01T10:00:00.000Z",
+      lastGraphExtractedEventId: "obs_1",
+    });
+    vi.mocked(kv.list).mockResolvedValue([
+      {
+        id: "obs_1",
+        timestamp: "2026-01-01T10:00:00.000Z",
+        title: "prior",
+        derivedBy: "llm",
+      },
+      {
+        id: "obs_2",
+        timestamp: new Date().toISOString(),
+        title: "recent synthetic",
+        derivedBy: "synthetic",
+      },
+    ]);
+    const { sdk, handlers, trigger } = mockSdk();
+    registerEventTriggers(sdk as never, kv as never);
+
+    await handlers.get("event::session::stopped")!({ sessionId: "ses_1" });
+
+    expect(functionIds(trigger)).not.toContain("mem::graph-extract");
   });
 
   it("does not throw and still returns the summary when consolidate-pipeline trigger rejects", async () => {
