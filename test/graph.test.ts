@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerGraphFunction } from "../src/functions/graph.js";
+import { KV } from "../src/state/schema.js";
 import type {
   CompressedObservation,
   GraphNode,
@@ -22,6 +23,17 @@ function mockKV() {
       if (!store.has(scope)) store.set(scope, new Map());
       store.get(scope)!.set(key, data);
       return data;
+    },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ type?: string; path: string; value: unknown }>,
+    ) => {
+      if (!store.has(scope)) store.set(scope, new Map());
+      const m = store.get(scope)!;
+      const v = { ...((m.get(key) as Record<string, unknown>) ?? {}) };
+      for (const u of updates) v[u.path] = u.value;
+      m.set(key, v);
     },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
@@ -728,5 +740,45 @@ describe("Graph Functions", () => {
       expect(result.success).toBe(true);
       expect(listCalls).toBe(0);
     });
+  });
+
+  it("stamps graph watermark when sessionId is provided", async () => {
+    const localKv = mockKV();
+    const localSdk = mockSdk();
+    registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+    await localKv.set(KV.sessions, "ses_graph", {
+      id: "ses_graph",
+      project: "p",
+      cwd: "/tmp",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      status: "active",
+      observationCount: 1,
+    });
+
+    const result = (await localSdk.trigger("mem::graph-extract", {
+      observations: [testObs],
+      sessionId: "ses_graph",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    const session = (await localKv.get(KV.sessions, "ses_graph")) as {
+      lastGraphExtractedEventId?: string;
+      lastGraphExtractedEventAt?: string;
+    };
+    expect(session.lastGraphExtractedEventId).toBe("obs_1");
+    expect(session.lastGraphExtractedEventAt).toBe("2026-02-01T10:00:00Z");
+  });
+
+  it("does not stamp graph watermark when sessionId is omitted", async () => {
+    const localKv = mockKV();
+    const localSdk = mockSdk();
+    registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+
+    const result = (await localSdk.trigger("mem::graph-extract", {
+      observations: [testObs],
+    })) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(await localKv.get(KV.sessions, "ses_1")).toBeNull();
   });
 });

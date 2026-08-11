@@ -47,6 +47,17 @@ function mockKV() {
       store.get(scope)!.set(key, data);
       return data;
     },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ type?: string; path: string; value: unknown }>,
+    ) => {
+      if (!store.has(scope)) store.set(scope, new Map());
+      const m = store.get(scope)!;
+      const v = { ...((m.get(key) as Record<string, unknown>) ?? {}) };
+      for (const u of updates) v[u.path] = u.value;
+      m.set(key, v);
+    },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
     },

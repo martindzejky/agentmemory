@@ -13,8 +13,16 @@ export interface Session {
   commitShas?: string[];
   agentId?: string;
   updatedAt?: string;
-  idleProcessedObservationCount?: number;
-  idleProcessedAt?: string;
+  lastEventAt?: string;
+  lastSummarizedEventId?: string;
+  lastSummarizedEventAt?: string;
+  lastReflectedEventId?: string;
+  lastReflectedEventAt?: string;
+  lastGraphExtractedEventId?: string;
+  lastGraphExtractedEventAt?: string;
+  summaryRevision?: number;
+  summarizedObservationCount?: number;
+  lastSweepAttemptAt?: string;
 }
 
 export interface CommitLink {
