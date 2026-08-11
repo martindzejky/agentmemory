@@ -1104,6 +1104,12 @@
       discovery: '&#128161;', subagent: '&#129302;', notification: '&#128276;',
       task: '&#9745;', other: '&#128196;'
     };
+    var HOOK_TYPE_MAP = {
+      assistant_response: 'conversation',
+      prompt_submit: 'conversation',
+      subagent_start: 'subagent',
+      subagent_stop: 'subagent'
+    };
     var CB_STATE_COLORS = { closed: 'badge-green', open: 'badge-red', 'half-open': 'badge-yellow' };
     var TAB_IDS = ['dashboard', 'graph', 'memories', 'timeline', 'sessions', 'lessons', 'actions', 'crystals', 'audit', 'activity', 'profile', 'replay'];
     var VIEWER_TOKEN_STORAGE_KEY = 'agentmemory-viewer-token';
@@ -2656,7 +2662,7 @@
       paged.forEach(function(o, idx) {
         var isCompressed = !!o.narrative || !!o.type;
         var isRaw = !isCompressed;
-        var type = o.type || TOOL_TYPE_MAP[o.toolName] || 'other';
+        var type = o.type || TOOL_TYPE_MAP[o.toolName] || HOOK_TYPE_MAP[o.hookType] || 'other';
         var impVal = typeof o.importance === 'number' ? o.importance : 5;
         var impClass = impVal >= 7 ? 'high' : impVal >= 4 ? 'med' : 'low';
         var title = o.title || o.toolName || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'Observation');
@@ -2884,7 +2890,7 @@
         html += '<div style="font-size:13px;color:var(--ink-faint);font-style:italic;">No recent activity</div>';
       } else {
         sortedObs.slice(0, 20).forEach(function(o) {
-          var type = o.type || TOOL_TYPE_MAP[o.toolName] || 'other';
+          var type = o.type || TOOL_TYPE_MAP[o.toolName] || HOOK_TYPE_MAP[o.hookType] || 'other';
           var typeColor = OBS_TYPE_COLORS[type] || '#666666';
           var icon = OBS_TYPE_ICONS[type] || '&#128196;';
           var title = o.title || o.toolName || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'Observation');

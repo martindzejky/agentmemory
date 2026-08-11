@@ -45,6 +45,8 @@ function kindFromHook(obs: RawObservation): TimelineEventKind {
       return "session_end";
     case "prompt_submit":
       return "prompt";
+    case "assistant_response":
+      return "response";
     case "stop":
       return obs.assistantResponse ? "response" : "hook";
     case "pre_tool_use":

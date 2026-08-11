@@ -14,8 +14,13 @@ function inferType(
   hookType: string,
 ): ObservationType {
   if (hookType === "post_tool_failure") return "error";
-  if (hookType === "prompt_submit") return "conversation";
-  if (hookType === "subagent_stop" || hookType === "task_completed")
+  if (hookType === "prompt_submit" || hookType === "assistant_response")
+    return "conversation";
+  if (
+    hookType === "subagent_start" ||
+    hookType === "subagent_stop" ||
+    hookType === "task_completed"
+  )
     return "subagent";
   if (hookType === "notification") return "notification";
 
@@ -73,6 +78,18 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + "\u2026" : s;
 }
 
+function titleFor(raw: RawObservation): string {
+  if (raw.hookType === "assistant_response") {
+    return "Assistant response";
+  }
+  if (raw.hookType === "subagent_start" || raw.hookType === "subagent_stop") {
+    const kind = raw.subagentType?.trim() || "subagent";
+    const verb = raw.hookType === "subagent_start" ? "start" : "stop";
+    return truncate(`Subagent ${verb}: ${kind}`, 80);
+  }
+  return truncate(raw.toolName ?? raw.hookType ?? "observation", 80);
+}
+
 export function buildSyntheticCompression(
   raw: RawObservation,
 ): CompressedObservation {
@@ -80,18 +97,36 @@ export function buildSyntheticCompression(
   const inputStr = stringifyForNarrative(raw.toolInput);
   const outputStr = stringifyForNarrative(raw.toolOutput);
   const promptStr = raw.userPrompt ?? "";
+  const responseStr = raw.assistantResponse ?? "";
+  const subagentParts = [
+    raw.subagentType ? `type=${raw.subagentType}` : "",
+    raw.subagentTask ?? "",
+    raw.subagentStatus ? `status=${raw.subagentStatus}` : "",
+    raw.subagentSummary ?? "",
+  ].filter((s) => s.length > 0);
 
-  const narrativeParts = [promptStr, inputStr, outputStr].filter(
-    (s) => s.length > 0,
-  );
+  const narrativeParts = [
+    promptStr,
+    responseStr,
+    inputStr,
+    outputStr,
+    ...subagentParts,
+  ].filter((s) => s.length > 0);
+
+  const subtitleSource =
+    responseStr ||
+    raw.subagentTask ||
+    raw.subagentSummary ||
+    inputStr ||
+    "";
 
   const result: CompressedObservation = {
     id: raw.id,
     sessionId: raw.sessionId,
     timestamp: raw.timestamp,
     type: inferType(toolName, raw.hookType),
-    title: truncate(toolName || "observation", 80),
-    subtitle: inputStr ? truncate(inputStr, 120) : undefined,
+    title: titleFor(raw),
+    subtitle: subtitleSource ? truncate(subtitleSource, 120) : undefined,
     facts: [],
     narrative: truncate(narrativeParts.join(" | "), 400),
     concepts: [],
