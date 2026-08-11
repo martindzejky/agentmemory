@@ -324,6 +324,7 @@ export interface ExportData {
   exportedAt: string;
   sessions: Session[];
   observations: Record<string, CompressedObservation[]>;
+  rawEvents?: Record<string, RawObservation[]>;
   memories: Memory[];
   summaries: SessionSummary[];
   profiles?: ProjectProfile[];
