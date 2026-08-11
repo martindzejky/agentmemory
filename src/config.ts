@@ -544,6 +544,19 @@ export function getSummaryRebuildInterval(): number {
     : SUMMARY_REBUILD_INTERVAL_DEFAULT;
 }
 
+// When auto-compress is on, summarize waits for synthetic rows to upgrade
+// to derivedBy=llm. Past this grace window a stuck row is summarized as-is
+// so a permanently failed compress cannot stall the session forever.
+const COMPRESS_UPGRADE_GRACE_DEFAULT_MS = 5 * 60 * 1000;
+
+export function getCompressUpgradeGraceMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"],
+    COMPRESS_UPGRADE_GRACE_DEFAULT_MS,
+  );
+  return raw >= 0 ? raw : COMPRESS_UPGRADE_GRACE_DEFAULT_MS;
+}
+
 export function isStandaloneMcp(): boolean {
   return getMergedEnv()["STANDALONE_MCP"] === "true";
 }

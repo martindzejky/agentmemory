@@ -21,14 +21,33 @@ import type { MetricsStore } from "../eval/metrics-store.js";
 import { safeAudit } from "./audit.js";
 import { ensureSession } from "./ensure-session.js";
 import { logger } from "../logger.js";
-import { getSummaryRebuildInterval } from "../config.js";
+import {
+  getCompressUpgradeGraceMs,
+  getSummaryRebuildInterval,
+  isAutoCompressEnabled,
+} from "../config.js";
 import {
   splitByCursor,
   sortByEventCursor,
   newestEventCursor,
+  eventTimestampMs,
   type EventCursor,
 } from "./event-cursor.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
+
+function truncateAwaitingLlmUpgrade<T extends CompressedObservation>(
+  items: T[],
+  nowMs: number,
+  graceMs: number,
+): T[] {
+  const cutoff = items.findIndex((item) => {
+    if (item.derivedBy === "llm") return false;
+    const ts = eventTimestampMs(item.timestamp);
+    if (ts === null) return false;
+    return nowMs - ts < graceMs;
+  });
+  return cutoff < 0 ? items : items.slice(0, cutoff);
+}
 
 // Per-chunk observation budget when a session is too large to fit in one
 // LLM call. Default ≈ 50k input tokens per chunk at ~110 tok/obs — fits
@@ -350,7 +369,19 @@ export function registerSummarizeFunction(
               id: session.lastSummarizedEventId,
             }
           : undefined;
-      const { newItems } = splitByCursor(compressed, summarizeCursor);
+      let eligible = compressed;
+      if (isAutoCompressEnabled()) {
+        eligible = truncateAwaitingLlmUpgrade(
+          compressed,
+          Date.now(),
+          getCompressUpgradeGraceMs(),
+        );
+      }
+      if (eligible.length === 0) {
+        logger.info("Summarize skipped — nothing eligible yet", { sessionId });
+        return { success: true, skipped: true, reason: "nothing_new" };
+      }
+      const { newItems } = splitByCursor(eligible, summarizeCursor);
       const revision = session.summaryRevision ?? 0;
       const rebuildInterval = getSummaryRebuildInterval();
       const dueForRebuild =
@@ -372,8 +403,10 @@ export function registerSummarizeFunction(
         return { success: true, skipped: true, reason: "nothing_new" };
       }
 
-      const batch = useIncremental ? newItems : compressed;
+      const batch = useIncremental ? newItems : eligible;
       const totalObservationCount = compressed.length;
+      const mergeTotalCount = eligible.length;
+      const mergePriorCount = mergeTotalCount - newItems.length;
       const countToStamp =
         typeof session.observationCount === "number"
           ? session.observationCount
@@ -432,9 +465,9 @@ export function registerSummarizeFunction(
               provider,
               storedSummary,
               newPartial,
-              compressed.length - newItems.length,
+              mergePriorCount,
               newItems.length,
-              totalObservationCount,
+              mergeTotalCount,
             );
             response = mergedXml;
             summary = parseSummaryXml(
@@ -530,7 +563,7 @@ export function registerSummarizeFunction(
         const qualityScore = scoreSummary(summaryForValidation);
 
         await kv.set(KV.summaries, sessionId, summary);
-        const watermarkCursor = newestEventCursor(compressed);
+        const watermarkCursor = newestEventCursor(batch);
         if (watermarkCursor) {
           await stampSummarizeWatermark(
             kv,

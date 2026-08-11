@@ -134,6 +134,7 @@ export function buildSyntheticCompression(
     files: extractFiles(raw.toolInput),
     importance: 5,
     confidence: 0.3,
+    derivedBy: "synthetic",
   };
   if (raw.modality) result.modality = raw.modality;
   if (raw.imageData) result.imageData = raw.imageData;

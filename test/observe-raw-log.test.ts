@@ -138,6 +138,56 @@ describe("mem::observe raw event log", () => {
     expect(raw?.hookType).toBe("post_tool_use");
     expect(derived?.title).toBe("Read");
     expect(derived?.confidence).toBe(0.3);
+    expect(derived?.derivedBy).toBe("synthetic");
+  });
+
+  it("persists derivedBy=synthetic on the kv row from observe", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      observePayload(),
+    )) as { observationId: string };
+
+    const derived = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(derived?.derivedBy).toBe("synthetic");
+  });
+
+  it("persists derivedBy=llm on the kv row after compress upgrade", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      observePayload(),
+    )) as { observationId: string };
+
+    const before = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(before?.derivedBy).toBe("synthetic");
+
+    await sdk.trigger({
+      function_id: "mem::compress",
+      payload: {
+        observationId: result.observationId,
+        sessionId: "ses_raw",
+      },
+    });
+
+    const after = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(after?.derivedBy).toBe("llm");
+    expect(after?.narrative).toBe("LLM compressed");
   });
 
   it("keeps raw readable after derived row is written with auto-compress", async () => {
@@ -169,7 +219,6 @@ describe("mem::observe raw event log", () => {
       payload: {
         observationId: result.observationId,
         sessionId: "ses_raw",
-        raw: raw!,
       },
     });
 
@@ -183,6 +232,76 @@ describe("mem::observe raw event log", () => {
     );
     expect(rawAfter?.toolOutput).toBe("full tool output preserved in raw log");
     expect(upgraded?.narrative).toBe("LLM compressed");
+  });
+
+  it("compress loads raw from KV.rawEvents without payload fallback", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      observePayload(),
+    )) as { observationId: string };
+
+    const compressResult = (await sdk.trigger({
+      function_id: "mem::compress",
+      payload: {
+        observationId: result.observationId,
+        sessionId: "ses_raw",
+      },
+    })) as { success: boolean; compressed?: CompressedObservation };
+
+    expect(compressResult.success).toBe(true);
+    expect(compressResult.compressed?.narrative).toBe("LLM compressed");
+  });
+
+  it("compress returns raw_not_found when neither KV nor payload raw is available", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const compressResult = (await sdk.trigger({
+      function_id: "mem::compress",
+      payload: {
+        observationId: "obs_missing",
+        sessionId: "ses_raw",
+      },
+    })) as { success: boolean; error?: string };
+
+    expect(compressResult).toEqual({
+      success: false,
+      error: "raw_not_found",
+    });
+  });
+
+  it("compress falls back to payload raw when KV.rawEvents miss", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const fallbackRaw: RawObservation = {
+      id: "obs_fallback",
+      sessionId: "ses_raw",
+      timestamp: "2026-01-01T10:00:00.000Z",
+      hookType: "post_tool_use",
+      toolName: "Read",
+      toolInput: { file_path: "src/fallback.ts" },
+      toolOutput: "fallback output",
+      raw: {},
+    };
+
+    const compressResult = (await sdk.trigger({
+      function_id: "mem::compress",
+      payload: {
+        observationId: "obs_fallback",
+        sessionId: "ses_raw",
+        raw: fallbackRaw,
+      },
+    })) as { success: boolean; compressed?: CompressedObservation };
+
+    expect(compressResult.success).toBe(true);
+    expect(compressResult.compressed?.narrative).toBe("LLM compressed");
   });
 
   it("leaves synthetic derived row and raw event intact when compression fails", async () => {
@@ -201,10 +320,6 @@ describe("mem::observe raw event log", () => {
       payload: {
         observationId: result.observationId,
         sessionId: "ses_raw",
-        raw: (await kv.get<RawObservation>(
-          "mem:raw:ses_raw",
-          result.observationId,
-        ))!,
       },
     })) as { success: boolean; error?: string };
 

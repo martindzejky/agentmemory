@@ -86,6 +86,7 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
+  derivedBy?: "synthetic" | "llm";
 }
 
 export type ObservationType =
