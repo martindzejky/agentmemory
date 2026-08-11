@@ -943,14 +943,12 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const sessionId = asNonEmptyString(body.sessionId);
-      const files = Array.isArray(body.files) ? body.files : null;
       if (
-        !sessionId ||
-        !files ||
-        files.length === 0 ||
-        !files.every((f: unknown) => typeof f === "string")
+        !req.body?.sessionId ||
+        typeof req.body.sessionId !== "string" ||
+        !Array.isArray(req.body?.files) ||
+        req.body.files.length === 0 ||
+        !req.body.files.every((f: unknown) => typeof f === "string")
       ) {
         return {
           status_code: 400,
@@ -960,9 +958,9 @@ export function registerApiTriggers(
         };
       }
       if (
-        body.terms !== undefined &&
-        (!Array.isArray(body.terms) ||
-          !body.terms.every((t: unknown) => typeof t === "string"))
+        req.body.terms !== undefined &&
+        (!Array.isArray(req.body.terms) ||
+          !req.body.terms.every((t: unknown) => typeof t === "string"))
       ) {
         return {
           status_code: 400,
@@ -970,8 +968,8 @@ export function registerApiTriggers(
         };
       }
       if (
-        body.project !== undefined &&
-        (typeof body.project !== "string" || !body.project.trim())
+        req.body.project !== undefined &&
+        (typeof req.body.project !== "string" || !req.body.project.trim())
       ) {
         return {
           status_code: 400,
@@ -979,28 +977,24 @@ export function registerApiTriggers(
         };
       }
       if (
-        body.cwd !== undefined &&
-        (typeof body.cwd !== "string" || !body.cwd.trim())
+        req.body.cwd !== undefined &&
+        (typeof req.body.cwd !== "string" || !req.body.cwd.trim())
       ) {
         return {
           status_code: 400,
           body: { error: "cwd must be a non-empty string" },
         };
       }
-      const project = asNonEmptyString(body.project);
-      const cwd = asNonEmptyString(body.cwd);
-      const requestAgentId = normalizeRequestAgentId(body.agentId);
-      const toolName =
-        typeof body.toolName === "string" ? body.toolName : undefined;
+      const requestAgentId = normalizeRequestAgentId(req.body.agentId);
       const result = await sdk.trigger({
         function_id: "mem::enrich",
         payload: {
-          sessionId,
-          files: files as string[],
-          ...(body.terms !== undefined && { terms: body.terms as string[] }),
-          ...(toolName !== undefined && { toolName }),
-          ...(project ? { project } : {}),
-          ...(cwd ? { cwd } : {}),
+          sessionId: req.body.sessionId,
+          files: req.body.files,
+          ...(req.body.terms !== undefined && { terms: req.body.terms }),
+          ...(req.body.toolName !== undefined && { toolName: req.body.toolName }),
+          ...(req.body.project !== undefined && { project: req.body.project }),
+          ...(req.body.cwd !== undefined && { cwd: req.body.cwd }),
           ...(requestAgentId ? { agentId: requestAgentId } : {}),
         },
       });

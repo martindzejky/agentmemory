@@ -3053,9 +3053,6 @@
       html += '</div></div>';
 
       html += '<div style="display:flex;gap:8px;">';
-      if (detailId && s.status === 'active') {
-        html += '<button class="btn btn-danger" data-action="end-session" data-session-id="' + esc(detailId) + '">End Session</button>';
-      }
       if (detailId) {
         html += '<button class="btn btn-primary" data-action="summarize-session" data-session-id="' + esc(detailId) + '">Summarize</button>';
       } else {
@@ -3063,12 +3060,6 @@
       }
       html += '</div></div>';
       panel.innerHTML = html;
-    }
-
-    async function endSession(id) {
-      await apiPost('session/end', { sessionId: id });
-      state.sessions.loaded = false;
-      loadSessions();
     }
 
     async function summarizeSession(id, btn) {
@@ -3943,11 +3934,6 @@
       if (action === 'select-session') {
         var sessionId = target.getAttribute('data-session-id');
         if (sessionId) selectSession(sessionId);
-        return;
-      }
-      if (action === 'end-session') {
-        var endSessionId = target.getAttribute('data-session-id');
-        if (endSessionId) endSession(endSessionId);
         return;
       }
       if (action === 'summarize-session') {

@@ -463,8 +463,8 @@ export function getConsolidationCooldownMs(): number {
   return raw >= 0 ? raw : CONSOLIDATION_COOLDOWN_DEFAULT_MS;
 }
 
-// Idle catch-up sweep (Pass C): periodic backstop when Cursor stop/preCompact
-// hooks miss. Defaults are deliberately slow — many minutes, small batch.
+// Idle catch-up sweep: periodic backstop when Cursor stop/preCompact hooks
+// miss. Defaults are deliberately slow — many minutes, small batch.
 const IDLE_SWEEP_INTERVAL_DEFAULT_MS = 900_000; // 15m
 const MIN_IDLE_SWEEP_INTERVAL_MS = 60_000; // 1m floor — 0 would saturate the loop
 const IDLE_THRESHOLD_DEFAULT_MS = 1_800_000; // 30m
