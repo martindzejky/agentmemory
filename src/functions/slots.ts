@@ -1,11 +1,16 @@
 import type { ISdk } from "iii-sdk";
-import type { MemorySlot, CompressedObservation } from "../types.js";
+import type { MemorySlot, CompressedObservation, Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { recordAudit } from "./audit.js";
 import { getEnvVar } from "../config.js";
 import { logger } from "../logger.js";
+import {
+  isAfterCursor,
+  newestEventCursor,
+  sortByEventCursor,
+} from "./event-cursor.js";
 
 type SlotScope = "project" | "global";
 
@@ -364,22 +369,33 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       if (!data?.sessionId || typeof data.sessionId !== "string") {
         return { success: false, error: "sessionId required" };
       }
+      const sessionId = data.sessionId;
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      const reflectCursor =
+        session?.lastReflectedEventAt && session?.lastReflectedEventId
+          ? {
+              timestamp: session.lastReflectedEventAt,
+              id: session.lastReflectedEventId,
+            }
+          : undefined;
+
       const max =
         typeof data.maxObservations === "number" &&
         Number.isInteger(data.maxObservations) &&
         data.maxObservations > 0
           ? Math.min(200, data.maxObservations)
           : 50;
-      const observations = await kv.list<CompressedObservation>(
-        KV.observations(data.sessionId),
+      const observations = sortByEventCursor(
+        await kv.list<CompressedObservation>(KV.observations(sessionId)),
       );
       if (observations.length === 0) {
         return { success: true, applied: 0, reason: "no observations for session" };
       }
-      const recent = observations
-        .slice()
-        .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
-        .slice(0, max);
+      const hasNew = observations.some((obs) => isAfterCursor(obs, reflectCursor));
+      if (reflectCursor && !hasNew) {
+        return { success: true, applied: 0, reason: "nothing_new" };
+      }
+      const recent = observations.slice(-max);
 
       const pendingLines: string[] = [];
       const patternCounts = new Map<string, number>();
@@ -475,10 +491,18 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       }
 
       if (applied > 0) {
-        await recordAudit(kv, "slot_reflect", "mem::slot-reflect", [data.sessionId], {
+        await recordAudit(kv, "slot_reflect", "mem::slot-reflect", [sessionId], {
           observationCount: recent.length,
           slotsUpdated: applied,
         });
+      }
+
+      const watermark = newestEventCursor(observations.filter((o) => o.title));
+      if (watermark) {
+        await kv.update(KV.sessions, sessionId, [
+          { type: "set", path: "lastReflectedEventId", value: watermark.id },
+          { type: "set", path: "lastReflectedEventAt", value: watermark.timestamp },
+        ]);
       }
 
       return { success: true, applied, observationsReviewed: recent.length };

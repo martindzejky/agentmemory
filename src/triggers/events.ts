@@ -10,6 +10,7 @@ import {
   isGraphExtractionEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
+import { isAfterCursor, sortByEventCursor } from "../functions/event-cursor.js";
 
 // Global marker recording when corpus consolidation last ran, used to debounce
 // event::session::stopped fan-out (evict/recovery and future flush callers).
@@ -110,14 +111,25 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     }
     if (isGraphExtractionEnabled()) {
       try {
+        const session = await kv.get<Session>(KV.sessions, data.sessionId);
+        const graphCursor =
+          session?.lastGraphExtractedEventAt &&
+          session?.lastGraphExtractedEventId
+            ? {
+                timestamp: session.lastGraphExtractedEventAt,
+                id: session.lastGraphExtractedEventId,
+              }
+            : undefined;
         const observations = await kv.list<CompressedObservation>(
           KV.observations(data.sessionId),
         );
-        const compressed = observations.filter((o) => o.title);
+        const compressed = sortByEventCursor(
+          observations.filter((o) => o.title),
+        ).filter((o) => isAfterCursor(o, graphCursor));
         if (compressed.length > 0) {
           sdk.trigger({
             function_id: "mem::graph-extract",
-            payload: { observations: compressed },
+            payload: { observations: compressed, sessionId: data.sessionId },
             action: TriggerAction.Void(),
           });
         }
