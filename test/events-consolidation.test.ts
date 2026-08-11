@@ -25,11 +25,11 @@ import {
 import { isReflectEnabled } from "../src/functions/slots.js";
 import { logger } from "../src/logger.js";
 
-// event::session::stopped is the single source of truth for consolidation.
-// It fans out mem::summarize (awaited) plus fire-and-forget void triggers for
-// slot-reflect / consolidate-pipeline / auto-crystallize, each gated by config.
-// The client session-end hook no longer POSTs crystals/auto or
-// consolidate-pipeline, so these no longer double-fire for Claude Code.
+// Consolidation is driven by event::session::stopped (evict / stale recovery)
+// plus the periodic mem::consolidate-pipeline timer. /session/end is a
+// deprecated noop and does not fan out stopped work. When stopped runs, it
+// awaits mem::summarize and may fire-and-forget slot-reflect /
+// consolidate-pipeline / auto-crystallize, each gated by config.
 
 function mockKV() {
   return {
@@ -205,10 +205,9 @@ describe("event::session::stopped consolidation fan-out", () => {
   });
 });
 
-// The client session-end hook is bundled into a standalone binary that reads
-// stdin and POSTs to REST, so it is exercised at the source level: after the
-// double-fire fix it must no longer POST the two direct consolidation
-// endpoints, leaving event::session::stopped as the only consolidation path.
+// The Claude Code session-end hook still POSTs /session/end for compatibility,
+// but that route is a noop. Guard that the hook source does not also POST the
+// direct consolidation endpoints (crystals/auto, consolidate-pipeline).
 describe("session-end hook no longer double-fires consolidation", () => {
   const src = readFileSync("src/hooks/session-end.ts", "utf-8");
 
@@ -239,7 +238,7 @@ describe("session-end hook no longer double-fires consolidation", () => {
 });
 
 // A KV that actually persists writes, so the debounce marker survives between
-// simulated per-turn stops.
+// simulated stopped invocations.
 function persistentKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -256,9 +255,9 @@ function persistentKV() {
 }
 
 // Regression: event::session::stopped may still be invoked by eviction /
-// recovery (and future flush paths). consolidate-pipeline + auto-crystallize
-// are full-corpus LLM work with no internal "nothing changed" guard, so the
-// debounce bounds corpus consolidation to once per cooldown.
+// recovery. consolidate-pipeline + auto-crystallize are full-corpus LLM work
+// with no internal "nothing changed" guard, so the debounce bounds corpus
+// consolidation to once per cooldown.
 describe("session-stop consolidation debounce", () => {
   beforeEach(() => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
@@ -267,12 +266,12 @@ describe("session-stop consolidation debounce", () => {
     vi.mocked(getConsolidationCooldownMs).mockReturnValue(300000);
   });
 
-  it("consolidates at most once across many per-turn stops within the cooldown", async () => {
+  it("consolidates at most once across many stopped invocations within the cooldown", async () => {
     const { sdk, handlers, trigger } = mockSdk();
     registerEventTriggers(sdk as never, persistentKV() as never);
     const stopped = handlers.get("event::session::stopped")!;
 
-    // 5 per-turn Stop hooks in quick succession (all within the cooldown).
+    // 5 stopped invocations in quick succession (all within the cooldown).
     for (let i = 0; i < 5; i++) await stopped({ sessionId: "ses_1" });
 
     const count = (id: string) =>
@@ -283,7 +282,7 @@ describe("session-stop consolidation debounce", () => {
     // Corpus consolidation runs ONCE, not five times.
     expect(count("mem::consolidate-pipeline")).toBe(1);
     expect(count("mem::auto-crystallize")).toBe(1);
-    // Per-turn summary capture still runs every turn (the cheap path).
+    // Summarize still runs on every stopped invocation (the cheap path).
     expect(count("mem::summarize")).toBe(5);
   });
 

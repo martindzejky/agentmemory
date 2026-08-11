@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-// Pass B: /session/end is a deprecated noop for open-ended Cursor chats.
+// /session/end is a deprecated noop for open-ended Cursor chats.
 // It must not stamp completed/endedAt or fan out event::session::stopped.
-describe("api::session::end is a deprecated noop (Pass B)", () => {
+describe("api::session::end is a deprecated noop", () => {
   const api = readFileSync("src/triggers/api.ts", "utf-8");
   const endHandler = api.match(
     /registerFunction\("api::session::end"[\s\S]*?registerTrigger\(\{[\s\S]*?api_path:\s*"\/agentmemory\/session\/end"/,
@@ -28,7 +28,7 @@ describe("api::session::end is a deprecated noop (Pass B)", () => {
   });
 });
 
-describe("event::session::ended is a deprecated noop (Pass B)", () => {
+describe("event::session::ended is a deprecated noop", () => {
   const events = readFileSync("src/triggers/events.ts", "utf-8");
   const endedHandler = events.match(
     /registerFunction\(\s*"event::session::ended"[\s\S]*?registerTrigger\(\{[\s\S]*?topic:\s*"agentmemory\.session\.ended"/,

@@ -615,7 +615,7 @@ async function main() {
     bootLog(`Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m)`);
   }
 
-  // Pass C: idle catch-up when Cursor stop/preCompact hooks miss. Reuses
+  // Idle catch-up sweep when Cursor stop/preCompact hooks miss. Reuses
   // event::session::stopped with skipConsolidation (corpus work stays on the
   // consolidation timer above). unref'd like neighbouring timers — shutdown
   // does not clearInterval for those either.
