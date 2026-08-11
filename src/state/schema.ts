@@ -5,6 +5,9 @@ export const KV = {
   sessions: "mem:sessions",
   observations: (sessionId: string) => `mem:obs:${sessionId}`,
   rawEvents: (sessionId: string) => `mem:raw:${sessionId}`,
+  // Client eventId -> observationId index for durable ingest idempotency.
+  // Prefix mem:evt: cannot collide with mem:emb:, mem:enriched:, etc.
+  eventIds: (sessionId: string) => `mem:evt:${sessionId}`,
   memories: "mem:memories",
   summaries: "mem:summaries",
   config: "mem:config",
