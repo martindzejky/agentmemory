@@ -16,6 +16,7 @@ import {
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { newestEventCursor } from "./event-cursor.js";
+import { withKeyedLock } from "../state/keyed-mutex.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -646,20 +647,31 @@ export function registerGraphFunction(
         });
 
         if (typeof data.sessionId === "string" && data.sessionId.trim()) {
-          const watermark = newestEventCursor(data.observations);
-          if (watermark) {
-            await kv.update(KV.sessions, data.sessionId.trim(), [
-              {
-                type: "set",
-                path: "lastGraphExtractedEventId",
-                value: watermark.id,
-              },
-              {
-                type: "set",
-                path: "lastGraphExtractedEventAt",
-                value: watermark.timestamp,
-              },
-            ]);
+          try {
+            const watermark = newestEventCursor(data.observations);
+            if (watermark) {
+              const sid = data.sessionId.trim();
+              await withKeyedLock(`session:${sid}`, async () => {
+                await kv.update(KV.sessions, sid, [
+                  {
+                    type: "set",
+                    path: "lastGraphExtractedEventId",
+                    value: watermark.id,
+                  },
+                  {
+                    type: "set",
+                    path: "lastGraphExtractedEventAt",
+                    value: watermark.timestamp,
+                  },
+                ]);
+              });
+            }
+          } catch (stampErr) {
+            logger.warn("graph-extract watermark stamp failed", {
+              sessionId: data.sessionId,
+              error:
+                stampErr instanceof Error ? stampErr.message : String(stampErr),
+            });
           }
         }
 

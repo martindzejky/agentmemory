@@ -111,7 +111,13 @@ export async function ensureSession(
       if (typeof input.lastEventAt === "string" && input.lastEventAt.trim()) {
         const incoming = input.lastEventAt.trim();
         const current = existing.lastEventAt;
-        if (!current || incoming > current) {
+        const incomingMs = new Date(incoming).getTime();
+        const currentMs =
+          typeof current === "string" ? new Date(current).getTime() : NaN;
+        if (
+          Number.isFinite(incomingMs) &&
+          (!Number.isFinite(currentMs) || incomingMs > currentMs)
+        ) {
           updates.push({ type: "set", path: "lastEventAt", value: incoming });
         }
       }

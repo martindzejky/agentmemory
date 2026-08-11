@@ -286,9 +286,13 @@ describe("mem::summarize watermarks", () => {
     expect(session.summaryRevision).toBeUndefined();
   });
 
-  it("forces a full rebuild when summaryRevision reaches the interval", async () => {
+  it("forces a full rebuild periodically then resumes incremental", async () => {
     vi.mocked(getSummaryRebuildInterval).mockReturnValue(2);
-    const provider = makeProvider([summaryXml("full rebuild")]);
+    const provider = makeProvider([
+      summaryXml("full rebuild"),
+      summaryXml("partial"),
+      summaryXml("merged"),
+    ]);
     const { handler, kv } = await setup({
       observations: [
         makeObs(1, sessionId, "2026-01-01T10:00:00.000Z"),
@@ -314,12 +318,79 @@ describe("mem::summarize watermarks", () => {
       provider,
     });
 
+    const rebuild: any = await handler({ sessionId });
+    expect(rebuild.success).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0]?.user).toContain("Session observations (2 total)");
+    expect(provider.calls[0]?.system).not.toContain("merging");
+    let session = (await kv.get("sessions", sessionId)) as Session;
+    expect(session.summaryRevision).toBe(3);
+
+    await kv.set(
+      `obs:${sessionId}`,
+      "obs_3",
+      makeObs(3, sessionId, "2026-01-01T12:00:00.000Z"),
+    );
+    session = (await kv.get("sessions", sessionId)) as Session;
+    await kv.set("sessions", sessionId, {
+      ...session,
+      observationCount: 3,
+    });
+
+    const incremental: any = await handler({ sessionId });
+    expect(incremental.success).toBe(true);
+    expect(provider.calls).toHaveLength(3);
+    expect(provider.calls[1]?.user).toContain("Session observations (1 total)");
+    expect(provider.calls[2]?.system).toContain("merging");
+    session = (await kv.get("sessions", sessionId)) as Session;
+    expect(session.summaryRevision).toBe(4);
+    expect(session.lastSummarizedEventId).toBe("obs_3");
+  });
+
+  it("takes a single full path for legacy sessions with a summary but no cursor", async () => {
+    const provider = makeProvider([summaryXml("legacy full")]);
+    const { handler, kv } = await setup({
+      observations: [
+        makeObs(1, sessionId, "2026-01-01T10:00:00.000Z"),
+        makeObs(2, sessionId, "2026-01-01T11:00:00.000Z"),
+      ],
+      storedSummary: {
+        sessionId,
+        project: "test",
+        createdAt: "2026-01-01T10:05:00.000Z",
+        title: "old",
+        narrative: "n",
+        keyDecisions: [],
+        filesModified: [],
+        concepts: [],
+        observationCount: 2,
+      },
+      provider,
+    });
+
     const result: any = await handler({ sessionId });
 
     expect(result.success).toBe(true);
     expect(provider.calls).toHaveLength(1);
     expect(provider.calls[0]?.user).toContain("Session observations (2 total)");
+    expect(provider.calls[0]?.system).not.toContain("merging");
     const session = (await kv.get("sessions", sessionId)) as Session;
-    expect(session.summaryRevision).toBe(3);
+    expect(session.lastSummarizedEventId).toBe("obs_2");
+    expect(session.summarizedObservationCount).toBe(2);
+  });
+
+  it("stamps summarizedObservationCount from session.observationCount", async () => {
+    const provider = makeProvider([summaryXml("count")]);
+    const { handler, kv } = await setup({
+      observations: [makeObs(1, sessionId, "2026-01-01T10:00:00.000Z")],
+      session: { observationCount: 5 },
+      provider,
+    });
+
+    const result: any = await handler({ sessionId });
+
+    expect(result.success).toBe(true);
+    const session = (await kv.get("sessions", sessionId)) as Session;
+    expect(session.summarizedObservationCount).toBe(5);
   });
 });

@@ -395,7 +395,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       if (reflectCursor && !hasNew) {
         return { success: true, applied: 0, reason: "nothing_new" };
       }
-      const recent = observations.slice(-max);
+      const recent = observations.slice(-max).reverse();
 
       const pendingLines: string[] = [];
       const patternCounts = new Map<string, number>();
@@ -499,10 +499,16 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
 
       const watermark = newestEventCursor(observations.filter((o) => o.title));
       if (watermark) {
-        await kv.update(KV.sessions, sessionId, [
-          { type: "set", path: "lastReflectedEventId", value: watermark.id },
-          { type: "set", path: "lastReflectedEventAt", value: watermark.timestamp },
-        ]);
+        await withKeyedLock(`session:${sessionId}`, async () => {
+          await kv.update(KV.sessions, sessionId, [
+            { type: "set", path: "lastReflectedEventId", value: watermark.id },
+            {
+              type: "set",
+              path: "lastReflectedEventAt",
+              value: watermark.timestamp,
+            },
+          ]);
+        });
       }
 
       return { success: true, applied, observationsReviewed: recent.length };

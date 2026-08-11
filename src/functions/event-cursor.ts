@@ -17,6 +17,12 @@ function timestampFromObsId(id: string): string | null {
   return Number.isFinite(new Date(iso).getTime()) ? iso : null;
 }
 
+export function eventTimestampMs(raw: string | undefined): number | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const ms = new Date(raw.trim()).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
 export function parseEventTimestamp(raw: string | undefined): string | null {
   if (typeof raw !== "string" || !raw.trim()) return null;
   const ms = new Date(raw.trim()).getTime();
@@ -43,10 +49,6 @@ export function isAfterCursor(
   cursor: EventCursor | undefined,
 ): boolean {
   if (!cursor) return true;
-  const rawTs = parseEventTimestamp(source.timestamp);
-  if (!rawTs) {
-    return source.id.localeCompare(cursor.id) > 0;
-  }
   return compareEventCursors(normalizeEventCursor(source), cursor) > 0;
 }
 
@@ -74,4 +76,15 @@ export function newestEventCursor<T extends EventCursorSource>(
   const sorted = sortByEventCursor(items);
   const last = sorted[sorted.length - 1];
   return normalizeEventCursor(last);
+}
+
+/** True when `a` is strictly later than `b` by epoch millis (format-safe). */
+export function isIsoTimestampAfter(
+  a: string | undefined,
+  b: string | undefined,
+): boolean {
+  const am = eventTimestampMs(a);
+  const bm = eventTimestampMs(b);
+  if (am === null || bm === null) return false;
+  return am > bm;
 }

@@ -352,21 +352,32 @@ export function registerSummarizeFunction(
           : undefined;
       const { newItems } = splitByCursor(compressed, summarizeCursor);
       const revision = session.summaryRevision ?? 0;
-      const forceFull =
-        data.summarizeAll === true ||
-        revision >= getSummaryRebuildInterval();
+      const rebuildInterval = getSummaryRebuildInterval();
+      const dueForRebuild =
+        revision > 0 && revision % rebuildInterval === 0;
+      const forceFull = data.summarizeAll === true || dueForRebuild;
+      const useIncremental =
+        !forceFull &&
+        !!storedSummary &&
+        !!summarizeCursor &&
+        newItems.length > 0;
 
       if (
         !forceFull &&
         storedSummary &&
+        summarizeCursor &&
         newItems.length === 0
       ) {
         logger.info("Summarize skipped — no new observations", { sessionId });
         return { success: true, skipped: true, reason: "nothing_new" };
       }
 
-      const batch = forceFull || !storedSummary ? compressed : newItems;
+      const batch = useIncremental ? newItems : compressed;
       const totalObservationCount = compressed.length;
+      const countToStamp =
+        typeof session.observationCount === "number"
+          ? session.observationCount
+          : compressed.length;
 
       if (provider.name === "noop") {
         logger.info("Summarize skipped — no LLM provider configured", {
@@ -386,7 +397,7 @@ export function registerSummarizeFunction(
         let mode = "single";
         let chunks = 1;
 
-        if (!forceFull && storedSummary && newItems.length > 0) {
+        if (useIncremental) {
           for (let attempt = 1; attempt <= 2; attempt++) {
             const produced = await produceSummaryXml(
               provider,
@@ -525,7 +536,7 @@ export function registerSummarizeFunction(
             kv,
             sessionId,
             watermarkCursor,
-            totalObservationCount,
+            countToStamp,
             revision + 1,
           );
         }
