@@ -1,9 +1,8 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { RawObservation, HookPayload } from "../types.js";
+import type { EventIdIndexEntry, RawObservation, HookPayload } from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
-import { DedupMap } from "./dedup.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
@@ -11,6 +10,7 @@ import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
 import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
 import { ensureSession, resolveCreateAgentId } from "./ensure-session.js";
+import { writeEventIdIndexEntry } from "./event-id-index.js";
 
 export function extractImage(d: unknown): string | undefined {
   if (!d) return undefined;
@@ -38,7 +38,6 @@ export function extractImage(d: unknown): string | undefined {
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
-  dedupMap?: DedupMap,
   maxObservationsPerSession?: number,
 ): void {
   sdk.registerFunction("mem::observe", 
@@ -88,6 +87,7 @@ export function registerObserveFunction(
         timestamp: payload.timestamp,
         hookType: payload.hookType,
         raw: sanitizedRaw,
+        ...(eventId ? { eventId } : {}),
       };
 
       let extractedImage: string | undefined;
@@ -133,14 +133,21 @@ export function registerObserveFunction(
       const pendingImageData = extractedImage;
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
-        // Checked under the existing obs:session lock. record() stays
-        // after successful kv.set so a failed write cannot poison the key.
-        if (eventId && dedupMap?.isDuplicate(payload.sessionId, eventId)) {
-          return {
-            deduplicated: true,
-            sessionId: payload.sessionId,
+        // Checked under the existing obs:session lock. Index write stays
+        // after successful raw+derived kv.set so a failed write cannot poison the key.
+        if (eventId) {
+          const existing = await kv.get<EventIdIndexEntry>(
+            KV.eventIds(payload.sessionId),
             eventId,
-          };
+          );
+          if (existing) {
+            return {
+              deduplicated: true,
+              sessionId: payload.sessionId,
+              eventId,
+              observationId: existing.observationId,
+            };
+          }
         }
 
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
@@ -203,6 +210,15 @@ export function registerObserveFunction(
             obsId,
             synthetic,
           );
+          if (eventId) {
+            await writeEventIdIndexEntry(
+              kv,
+              payload.sessionId,
+              eventId,
+              obsId,
+              payload.timestamp,
+            );
+          }
         } catch (error) {
           try {
             await kv.delete(KV.rawEvents(payload.sessionId), obsId);
@@ -212,6 +228,17 @@ export function registerObserveFunction(
               obsId,
               error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
             });
+          }
+          if (eventId) {
+            try {
+              await kv.delete(KV.eventIds(payload.sessionId), eventId);
+            } catch (rollbackError) {
+              logger.error("Failed to roll back eventId index after observation write failure", {
+                sessionId: payload.sessionId,
+                eventId,
+                error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+              });
+            }
           }
           if (raw.imageData) {
             // Roll back the ref taken above. decrementImageRef deletes the file
@@ -231,10 +258,6 @@ export function registerObserveFunction(
             }
           }
           throw error;
-        }
-
-        if (eventId && dedupMap) {
-          dedupMap.record(payload.sessionId, eventId);
         }
 
         await sdk.trigger({
