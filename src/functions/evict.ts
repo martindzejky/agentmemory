@@ -12,6 +12,7 @@ import { isConsolidationEnabled } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { pruneEventIdIndexEntry } from "./event-id-index.js";
 
 interface EvictionConfig {
   staleSessionDays: number;
@@ -214,6 +215,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               stats.lowImportanceObs++;
             } else {
               try {
+                await pruneEventIdIndexEntry(kv, session.id, o.id);
                 await kv.delete(KV.rawEvents(session.id), o.id);
                 await kv.delete(KV.observations(session.id), o.id);
                 stats.lowImportanceObs++;
@@ -258,6 +260,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
           } else {
             for (const o of toEvict) {
               try {
+                await pruneEventIdIndexEntry(kv, o.sessionId, o.id);
                 await kv.delete(KV.rawEvents(o.sessionId), o.id);
                 await kv.delete(KV.observations(o.sessionId), o.id);
                 stats.capEvictions++;

@@ -257,6 +257,47 @@ describe("mem::observe raw event log", () => {
     ).rejects.toThrow("derived write failed");
 
     expect(store.get("mem:raw:ses_raw")?.size ?? 0).toBe(0);
+    expect(store.get("mem:obs:ses_raw")?.size ?? 0).toBe(0);
+  });
+
+  it("rolls back raw and derived when eventId index write fails", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const store = new Map<string, Map<string, unknown>>();
+    const kv = {
+      store,
+      get: async <T>(scope: string, key: string): Promise<T | null> =>
+        (store.get(scope)?.get(key) as T) ?? null,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (scope.startsWith("mem:evt:")) {
+          throw new Error("eventId index write failed");
+        }
+        if (!store.has(scope)) store.set(scope, new Map());
+        store.get(scope)!.set(key, data);
+        return data;
+      },
+      delete: async (scope: string, key: string) => {
+        store.get(scope)?.delete(key);
+      },
+      list: async <T>(scope: string): Promise<T[]> => {
+        const m = store.get(scope);
+        return m ? (Array.from(m.values()) as T[]) : [];
+      },
+    };
+    registerObserveFunction(sdk as never, kv as never);
+
+    await expect(
+      sdk.trigger(
+        "mem::observe",
+        observePayload({ eventId: "evt_index_fail" }),
+      ),
+    ).rejects.toThrow("eventId index write failed");
+
+    expect(store.get("mem:raw:ses_raw")?.size ?? 0).toBe(0);
+    expect(store.get("mem:obs:ses_raw")?.size ?? 0).toBe(0);
+    expect(store.get("mem:evt:ses_raw")?.size ?? 0).toBe(0);
   });
 });
 

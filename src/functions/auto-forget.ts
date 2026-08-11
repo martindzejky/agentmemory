@@ -6,6 +6,7 @@ import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { getSearchIndex, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { logger } from "../logger.js";
+import { pruneEventIdIndexEntry } from "./event-id-index.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CONTRADICTION_THRESHOLD = 0.9;
@@ -166,6 +167,7 @@ export function registerAutoForgetFunction(sdk: ISdk, kv: StateKV): void {
             if (!dryRun) {
               let deletedOk = false;
               try {
+                await pruneEventIdIndexEntry(kv, sessions[i].id, obs.id);
                 await kv.delete(KV.rawEvents(sessions[i].id), obs.id);
                 await kv.delete(KV.observations(sessions[i].id), obs.id);
                 deletedOk = true;

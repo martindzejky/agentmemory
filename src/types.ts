@@ -57,6 +57,15 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
+  /** Client event id; present when the observe call supplied one. */
+  eventId?: string;
+}
+
+/** KV.eventIds entry: eventId key -> first observation produced for that id. */
+export interface EventIdIndexEntry {
+  eventId: string;
+  observationId: string;
+  at: string;
 }
 
 export interface CompressedObservation {

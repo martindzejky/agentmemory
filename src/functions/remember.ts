@@ -9,6 +9,10 @@ import { recordAudit } from "./audit.js";
 import { getSearchIndex, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
+import {
+  clearEventIdIndex,
+  pruneEventIdIndexEntry,
+} from "./event-id-index.js";
 
 // Slicing by UTF-16 code unit can cut an astral character (emoji, some CJK
 // extensions) mid surrogate pair, leaving a lone high surrogate that renders
@@ -213,6 +217,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
             KV.observations(data.sessionId),
             obsId,
           );
+          await pruneEventIdIndexEntry(kv, data.sessionId, obsId);
           await kv.delete(KV.rawEvents(data.sessionId), obsId);
           await kv.delete(KV.observations(data.sessionId), obsId);
           if (obs?.imageData) await decrementImageRef(kv, sdk, obs.imageData);
@@ -254,6 +259,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(raw.id);
           deleted++;
         }
+        await clearEventIdIndex(kv, data.sessionId);
         await kv.delete(KV.sessions, data.sessionId);
         await kv.delete(KV.summaries, data.sessionId);
         deletedSession = true;

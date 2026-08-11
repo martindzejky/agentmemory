@@ -1,10 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { DedupMap } from "../src/functions/dedup.js";
 import type { CompressedObservation } from "../src/types.js";
 
 function mockKV() {
@@ -80,15 +79,8 @@ function basePayload(overrides: Record<string, unknown> = {}) {
 }
 
 describe("mem::observe lifted event types", () => {
-  let dedupMap: DedupMap;
-
   beforeEach(() => {
     vi.resetModules();
-    dedupMap = new DedupMap();
-  });
-
-  afterEach(() => {
-    dedupMap.stop();
   });
 
   it("compresses assistant_response into a conversation row with readable title", async () => {
@@ -97,7 +89,7 @@ describe("mem::observe lifted event types", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger(
       "mem::observe",
@@ -124,7 +116,7 @@ describe("mem::observe lifted event types", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger(
       "mem::observe",
@@ -155,7 +147,7 @@ describe("mem::observe lifted event types", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger(
       "mem::observe",
@@ -186,7 +178,7 @@ describe("mem::observe lifted event types", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const prompt = (await sdk.trigger(
       "mem::observe",
@@ -246,7 +238,7 @@ describe("mem::observe lifted event types", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger(
       "mem::observe",

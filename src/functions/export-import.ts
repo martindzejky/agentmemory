@@ -33,6 +33,11 @@ import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { indexRecords } from "./search.js";
 import { logger } from "../logger.js";
+import {
+  clearEventIdIndex,
+  indexRawEventIfPresent,
+  pruneEventIdIndexEntry,
+} from "./event-id-index.js";
 
 // Bounded-concurrency chunk size for the import delete/write loops. A
 // "replace" or "merge" of a large export (up to MAX_TOTAL_OBSERVATIONS,
@@ -342,6 +347,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
               obsDeletes.push({ sessionId: session.id, obsId: r.id });
             }
           }
+          await clearEventIdIndex(kv, session.id);
         });
         await runChunked(obsDeletes, (d) =>
           Promise.all([
@@ -479,7 +485,11 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
                 return;
               }
             }
+            // Prune before overwrite so a changed/removed eventId cannot leave
+            // a stale index key pointing at this observation id.
+            await pruneEventIdIndexEntry(kv, sessionId, event.id);
             await kv.set(KV.rawEvents(sessionId), event.id, event);
+            await indexRawEventIfPresent(kv, sessionId, event);
           });
         }
       }
