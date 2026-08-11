@@ -21,6 +21,8 @@ export interface EnsureSessionInput {
   firstPrompt?: string;
   /** Refresh updatedAt on existing sessions. Default true. */
   touchUpdatedAt?: boolean;
+  /** Stamp lastEventAt when ingesting an observation (ISO timestamp). */
+  lastEventAt?: string;
 }
 
 export type EnsureSessionResult =
@@ -106,6 +108,14 @@ export async function ensureSession(
         });
       }
 
+      if (typeof input.lastEventAt === "string" && input.lastEventAt.trim()) {
+        const incoming = input.lastEventAt.trim();
+        const current = existing.lastEventAt;
+        if (!current || incoming > current) {
+          updates.push({ type: "set", path: "lastEventAt", value: incoming });
+        }
+      }
+
       if (updates.length > 0) {
         await kv.update(KV.sessions, input.sessionId, updates);
       }
@@ -136,6 +146,10 @@ export async function ensureSession(
       updatedAt: now,
       status: "active",
       observationCount: input.createObservationCount ?? 0,
+      lastEventAt:
+        typeof input.lastEventAt === "string" && input.lastEventAt.trim()
+          ? input.lastEventAt.trim()
+          : now,
       ...(agentId ? { agentId } : {}),
       ...(firstPrompt ? { firstPrompt } : {}),
     };

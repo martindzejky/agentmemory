@@ -39,14 +39,32 @@ function activityAtMs(session: SessionRow): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function pendingObservations(session: SessionRow): number {
+function newestIngestedAt(session: SessionRow): string | undefined {
+  return session.lastEventAt ?? session.updatedAt ?? session.startedAt;
+}
+
+function pendingObservationCount(session: SessionRow): number {
   const obsCount =
     typeof session.observationCount === "number" ? session.observationCount : 0;
   const processed =
-    typeof session.idleProcessedObservationCount === "number"
-      ? session.idleProcessedObservationCount
+    typeof session.summarizedObservationCount === "number"
+      ? session.summarizedObservationCount
       : 0;
   return obsCount - processed;
+}
+
+function hasEventPending(session: SessionRow): boolean {
+  const obsCount =
+    typeof session.observationCount === "number" ? session.observationCount : 0;
+  if (obsCount <= 0) return false;
+  if (!session.lastSummarizedEventAt) return true;
+  const newest = newestIngestedAt(session);
+  if (!newest) return false;
+  return newest > session.lastSummarizedEventAt;
+}
+
+function hasPendingWork(session: SessionRow): boolean {
+  return hasEventPending(session) || pendingObservationCount(session) > 0;
 }
 
 function inCooldown(
@@ -54,10 +72,10 @@ function inCooldown(
   nowMs: number,
   cooldownMs: number,
 ): boolean {
-  if (cooldownMs <= 0 || typeof session.idleProcessedAt !== "string") {
+  if (cooldownMs <= 0 || typeof session.lastSweepAttemptAt !== "string") {
     return false;
   }
-  const at = new Date(session.idleProcessedAt).getTime();
+  const at = new Date(session.lastSweepAttemptAt).getTime();
   return Number.isFinite(at) && nowMs - at < cooldownMs;
 }
 
@@ -74,10 +92,10 @@ function needsProcessing(
   cooldownMs: number,
   obsCatchup: number,
 ): boolean {
-  const pending = pendingObservations(session);
-  if (pending <= 0) return false;
+  if (!hasPendingWork(session)) return false;
   if (inCooldown(session, nowMs, cooldownMs)) return false;
 
+  const pending = pendingObservationCount(session);
   const activityMs = activityAtMs(session);
   const isIdle =
     activityMs !== null && nowMs - activityMs >= idleThresholdMs;
@@ -104,16 +122,17 @@ async function touchIdleAttempt(
   advanceObservationCount?: number,
 ): Promise<void> {
   await withKeyedLock(`session:${sessionId}`, async () => {
-    const current = await kv.get<SessionRow>(KV.sessions, sessionId);
-    if (!current) return;
-    const next: SessionRow = {
-      ...current,
-      idleProcessedAt: attemptedAt,
-    };
+    const updates: Array<{ type: "set"; path: string; value: unknown }> = [
+      { type: "set", path: "lastSweepAttemptAt", value: attemptedAt },
+    ];
     if (typeof advanceObservationCount === "number") {
-      next.idleProcessedObservationCount = advanceObservationCount;
+      updates.push({
+        type: "set",
+        path: "summarizedObservationCount",
+        value: advanceObservationCount,
+      });
     }
-    await kv.set(KV.sessions, sessionId, next);
+    await kv.update(KV.sessions, sessionId, updates);
   });
 }
 

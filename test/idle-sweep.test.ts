@@ -62,8 +62,16 @@ function mockKV(store: Store) {
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
     },
-    update: async () => {
-      throw new Error("unused");
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ type?: string; path: string; value: unknown }>,
+    ) => {
+      const m = store.get(scope);
+      if (!m) return;
+      const v = { ...((m.get(key) as Record<string, unknown>) ?? {}) };
+      for (const u of updates) v[u.path] = u.value;
+      m.set(key, v);
     },
     list: async <T>(scope: string): Promise<T[]> => {
       const entries = store.get(scope);
@@ -164,17 +172,20 @@ describe("mem::idle-sweep", () => {
     ]);
 
     const updated = store.get(KV.sessions)!.get("ses_idle") as Session;
-    expect(updated.idleProcessedObservationCount).toBe(4);
-    expect(typeof updated.idleProcessedAt).toBe("string");
+    expect(updated.summarizedObservationCount).toBe(4);
+    expect(typeof updated.lastSweepAttemptAt).toBe("string");
   });
 
   it("skips an unchanged session with no trigger calls", async () => {
     const store = storeWithSessions([
       makeSession("ses_done", {
         updatedAt: minutesAgo(60),
+        lastEventAt: minutesAgo(90),
         observationCount: 4,
-        idleProcessedObservationCount: 4,
-        idleProcessedAt: minutesAgo(90),
+        summarizedObservationCount: 4,
+        lastSummarizedEventAt: minutesAgo(90),
+        lastSummarizedEventId: "obs_done",
+        lastSweepAttemptAt: minutesAgo(90),
       }),
     ]);
 
@@ -212,7 +223,7 @@ describe("mem::idle-sweep", () => {
       makeSession("ses_long", {
         updatedAt: minutesAgo(1),
         observationCount: 30,
-        idleProcessedObservationCount: 5,
+        summarizedObservationCount: 5,
       }),
     ]);
 
@@ -231,7 +242,7 @@ describe("mem::idle-sweep", () => {
       },
     ]);
     const updated = store.get(KV.sessions)!.get("ses_long") as Session;
-    expect(updated.idleProcessedObservationCount).toBe(30);
+    expect(updated.summarizedObservationCount).toBe(30);
   });
 
   it("respects the per-sweep session cap", async () => {
@@ -323,7 +334,7 @@ describe("mem::idle-sweep", () => {
       },
     ]);
     const updated = store.get(KV.sessions)!.get("ses_legacy") as Session;
-    expect(updated.idleProcessedObservationCount).toBe(2);
+    expect(updated.summarizedObservationCount).toBe(2);
   });
 
   it("skips sessions still inside the per-session cooldown window", async () => {
@@ -331,8 +342,8 @@ describe("mem::idle-sweep", () => {
       makeSession("ses_cool", {
         updatedAt: minutesAgo(60),
         observationCount: 5,
-        idleProcessedObservationCount: 3,
-        idleProcessedAt: minutesAgo(10),
+        summarizedObservationCount: 3,
+        lastSweepAttemptAt: minutesAgo(10),
       }),
     ]);
 
@@ -360,7 +371,7 @@ describe("mem::idle-sweep", () => {
 
     expect(result).toMatchObject({ processed: 1, failed: 0 });
     const updated = out.get(KV.sessions)!.get("ses_empty_obs") as Session;
-    expect(updated.idleProcessedObservationCount).toBe(1);
+    expect(updated.summarizedObservationCount).toBe(1);
   });
 
   it("records attempt time on rejected trigger without advancing the count marker", async () => {
@@ -387,14 +398,14 @@ describe("mem::idle-sweep", () => {
     );
 
     const failed = out.get(KV.sessions)!.get("ses_fail") as Session;
-    expect(failed.idleProcessedObservationCount).toBeUndefined();
-    expect(typeof failed.idleProcessedAt).toBe("string");
+    expect(failed.summarizedObservationCount).toBeUndefined();
+    expect(typeof failed.lastSweepAttemptAt).toBe("string");
 
     // Second sweep: failing session is in cooldown, healthy session proceeds.
     const second = await sweep({});
     expect(second).toMatchObject({ processed: 1, failed: 0, candidates: 1 });
     const ok = out.get(KV.sessions)!.get("ses_ok") as Session;
-    expect(ok.idleProcessedObservationCount).toBe(2);
+    expect(ok.summarizedObservationCount).toBe(2);
   });
 
   it("records attempt time on non-processable results like no_provider", async () => {
@@ -422,8 +433,8 @@ describe("mem::idle-sweep", () => {
       "ses_noprov",
     );
     const failed = out.get(KV.sessions)!.get("ses_noprov") as Session;
-    expect(failed.idleProcessedObservationCount).toBeUndefined();
-    expect(typeof failed.idleProcessedAt).toBe("string");
+    expect(failed.summarizedObservationCount).toBeUndefined();
+    expect(typeof failed.lastSweepAttemptAt).toBe("string");
 
     // After backoff, ses_ok2 is selected and succeeds — ses_noprov no longer
     // monopolizes the cap=1 slot.
@@ -431,7 +442,7 @@ describe("mem::idle-sweep", () => {
     expect(second).toMatchObject({ processed: 1, failed: 0, candidates: 1 });
     expect(
       (out.get(KV.sessions)!.get("ses_ok2") as Session)
-        .idleProcessedObservationCount,
+        .summarizedObservationCount,
     ).toBe(2);
   });
 

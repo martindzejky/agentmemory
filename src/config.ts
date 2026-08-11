@@ -531,6 +531,19 @@ export function getIdleSweepObsCatchup(): number {
     : IDLE_SWEEP_OBS_CATCHUP_DEFAULT;
 }
 
+const SUMMARY_REBUILD_INTERVAL_DEFAULT = 10;
+const MIN_SUMMARY_REBUILD_INTERVAL = 1;
+
+export function getSummaryRebuildInterval(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_SUMMARY_REBUILD_INTERVAL"],
+    SUMMARY_REBUILD_INTERVAL_DEFAULT,
+  );
+  return raw >= MIN_SUMMARY_REBUILD_INTERVAL
+    ? raw
+    : SUMMARY_REBUILD_INTERVAL_DEFAULT;
+}
+
 export function isStandaloneMcp(): boolean {
   return getMergedEnv()["STANDALONE_MCP"] === "true";
 }

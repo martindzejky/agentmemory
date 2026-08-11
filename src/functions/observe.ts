@@ -284,6 +284,7 @@ export function registerObserveFunction(
           startedAt: payload.timestamp,
           createObservationCount: 1,
           incrementObservationCount: 1,
+          lastEventAt: payload.timestamp,
           ...(trimmedPrompt && trimmedPrompt.length > 0
             ? { firstPrompt: trimmedPrompt }
             : {}),
