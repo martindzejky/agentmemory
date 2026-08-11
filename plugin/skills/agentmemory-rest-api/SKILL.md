@@ -37,9 +37,9 @@ By default localhost is open and no auth is needed. When `AGENTMEMORY_SECRET` is
 
 `POST /agentmemory/observe` requires `hookType`, `sessionId`, `project`, `cwd`, and `timestamp`. Optional: `agentId`, `data`, and `eventId`.
 
-`eventId` is the client idempotency key. A repeat of the same `eventId` for the same session is a no-op (`deduplicated: true`). Identical content with different `eventId`s both persist. Omitting `eventId` always writes; content/time-window ingest dedup is gone. Recommended for retries, not required.
+`eventId` is the client idempotency key. A repeat of the same `eventId` for the same session is a no-op (`deduplicated: true`, plus the original `observationId`). Identical content with different `eventId`s both persist. Omitting `eventId` always writes; content/time-window ingest dedup is gone. Recommended for retries, not required.
 
-Idempotency is best-effort within a 5-minute in-process window. It does not survive restarts, TTL expiry, or multiple replicas — not a durable guarantee.
+Idempotency is durable: the server indexes `eventId` in KV for as long as the raw event exists (survives restart and replicas; pruned when the event is pruned).
 
 Lifted `data` keys by `hookType` (these feed compression; unlisted keys stay in the opaque blob):
 
