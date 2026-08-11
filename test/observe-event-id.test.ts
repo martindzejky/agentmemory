@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { EventIdIndexEntry, RawObservation } from "../src/types.js";
 
 const loggerWarn = vi.fn();
 
@@ -6,10 +7,7 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: loggerWarn, error: vi.fn() },
 }));
 
-import { DedupMap } from "../src/functions/dedup.js";
-
-function mockKV() {
-  const store = new Map<string, Map<string, unknown>>();
+function mockKV(store = new Map<string, Map<string, unknown>>()) {
   return {
     store,
     get: async <T>(scope: string, key: string): Promise<T | null> =>
@@ -83,25 +81,23 @@ function basePayload(overrides: Record<string, unknown> = {}) {
 }
 
 describe("mem::observe eventId idempotency", () => {
-  let dedupMap: DedupMap;
-
   beforeEach(() => {
     vi.resetModules();
     loggerWarn.mockClear();
-    dedupMap = new DedupMap();
+    vi.useRealTimers();
   });
 
   afterEach(() => {
-    dedupMap.stop();
+    vi.useRealTimers();
   });
 
-  it("deduplicates the same eventId within a session", async () => {
+  it("deduplicates the same eventId within a session and returns observationId", async () => {
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const first = (await sdk.trigger(
       "mem::observe",
@@ -110,17 +106,52 @@ describe("mem::observe eventId idempotency", () => {
     const second = (await sdk.trigger(
       "mem::observe",
       basePayload({ eventId: "evt_1" }),
-    )) as { deduplicated: boolean; sessionId: string; eventId: string };
+    )) as {
+      deduplicated: boolean;
+      sessionId: string;
+      eventId: string;
+      observationId: string;
+    };
 
     expect(first.observationId).toBeTruthy();
     expect(second).toEqual({
       deduplicated: true,
       sessionId: "ses_event_id",
       eventId: "evt_1",
+      observationId: first.observationId,
     });
 
     const obs = await kv.list("mem:obs:ses_event_id");
     expect(obs).toHaveLength(1);
+    const raw = await kv.list("mem:raw:ses_event_id");
+    expect(raw).toHaveLength(1);
+  });
+
+  it("persists eventId on the raw KV.rawEvents row", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_persist" }),
+    )) as { observationId: string };
+
+    const raw = await kv.get<RawObservation>(
+      "mem:raw:ses_event_id",
+      result.observationId,
+    );
+    expect(raw?.eventId).toBe("evt_persist");
+
+    const derived = await kv.get<Record<string, unknown>>(
+      "mem:obs:ses_event_id",
+      result.observationId,
+    );
+    expect(derived?.["eventId"]).toBeUndefined();
+    expect(derived?.["title"]).toBeTruthy();
   });
 
   it("persists two observations with identical content when eventIds differ", async () => {
@@ -129,7 +160,7 @@ describe("mem::observe eventId idempotency", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const a = (await sdk.trigger(
       "mem::observe",
@@ -154,7 +185,7 @@ describe("mem::observe eventId idempotency", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const first = (await sdk.trigger(
       "mem::observe",
@@ -174,24 +205,30 @@ describe("mem::observe eventId idempotency", () => {
     expect(loggerWarn).toHaveBeenCalled();
   });
 
-  it("puts eventId on stream envelopes, not on the stored observation", async () => {
+  it("puts eventId on stream envelopes and on the raw row, not on derived", async () => {
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const result = (await sdk.trigger(
       "mem::observe",
       basePayload({ eventId: "evt_stream" }),
     )) as { observationId: string };
 
-    const stored = await kv.get<Record<string, unknown>>(
+    const derived = await kv.get<Record<string, unknown>>(
       "mem:obs:ses_event_id",
       result.observationId,
     );
-    expect(stored?.["eventId"]).toBeUndefined();
+    expect(derived?.["eventId"]).toBeUndefined();
+
+    const raw = await kv.get<RawObservation>(
+      "mem:raw:ses_event_id",
+      result.observationId,
+    );
+    expect(raw?.eventId).toBe("evt_stream");
 
     const streamSet = sdk.triggered.find((t) => t.id === "stream::set");
     const streamSend = sdk.triggered.find((t) => t.id === "stream::send");
@@ -209,7 +246,7 @@ describe("mem::observe eventId idempotency", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const a = (await sdk.trigger(
       "mem::observe",
@@ -234,7 +271,7 @@ describe("mem::observe eventId idempotency", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     const results = await Promise.all([
       sdk.trigger("mem::observe", basePayload({ eventId: "evt_race" })),
@@ -246,7 +283,8 @@ describe("mem::observe eventId idempotency", () => {
         typeof r === "object" &&
         r !== null &&
         "observationId" in r &&
-        typeof (r as { observationId: unknown }).observationId === "string",
+        typeof (r as { observationId: unknown }).observationId === "string" &&
+        (r as { deduplicated?: boolean }).deduplicated !== true,
     );
     const deduped = results.filter(
       (r): r is { deduplicated: true } =>
@@ -258,6 +296,7 @@ describe("mem::observe eventId idempotency", () => {
     expect(written).toHaveLength(1);
     expect(deduped).toHaveLength(1);
     expect(await kv.list("mem:obs:ses_event_id")).toHaveLength(1);
+    expect(await kv.list("mem:raw:ses_event_id")).toHaveLength(1);
   });
 
   it("does not collide when sessionId/eventId pairs share a colon shape", async () => {
@@ -266,7 +305,7 @@ describe("mem::observe eventId idempotency", () => {
     );
     const sdk = mockSdk();
     const kv = mockKV();
-    registerObserveFunction(sdk as never, kv as never, dedupMap);
+    registerObserveFunction(sdk as never, kv as never);
 
     // Flat `${sessionId}:${eventId}` would make these collide.
     const a = (await sdk.trigger(
@@ -283,5 +322,187 @@ describe("mem::observe eventId idempotency", () => {
     expect(a.observationId).not.toBe(b.observationId);
     expect(await kv.list("mem:obs:a:b")).toHaveLength(1);
     expect(await kv.list("mem:obs:a")).toHaveLength(1);
+  });
+
+  it("dedup survives a simulated restart against the same kv", async () => {
+    const store = new Map<string, Map<string, unknown>>();
+    const kv = mockKV(store);
+
+    const { registerObserveFunction: register1 } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk1 = mockSdk();
+    register1(sdk1 as never, kv as never);
+
+    const first = (await sdk1.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_restart" }),
+    )) as { observationId: string };
+    expect(first.observationId).toBeTruthy();
+
+    vi.resetModules();
+    const { registerObserveFunction: register2 } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk2 = mockSdk();
+    register2(sdk2 as never, kv as never);
+
+    const second = (await sdk2.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_restart" }),
+    )) as {
+      deduplicated: boolean;
+      observationId: string;
+    };
+
+    expect(second.deduplicated).toBe(true);
+    expect(second.observationId).toBe(first.observationId);
+    expect(await kv.list("mem:raw:ses_event_id")).toHaveLength(1);
+    expect(await kv.list("mem:obs:ses_event_id")).toHaveLength(1);
+  });
+
+  it("does not expire eventId index entries over time", async () => {
+    vi.useFakeTimers();
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const first = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_long_lived" }),
+    )) as { observationId: string };
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+    const second = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_long_lived" }),
+    )) as { deduplicated: boolean; observationId: string };
+
+    expect(second.deduplicated).toBe(true);
+    expect(second.observationId).toBe(first.observationId);
+    expect(await kv.list("mem:raw:ses_event_id")).toHaveLength(1);
+
+    const index = await kv.get<EventIdIndexEntry>(
+      "mem:evt:ses_event_id",
+      "evt_long_lived",
+    );
+    expect(index?.observationId).toBe(first.observationId);
+  });
+
+  it("clears the eventId index when a session is forgotten", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const { registerRememberFunction } = await import(
+      "../src/functions/remember.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+    registerRememberFunction(sdk as never, kv as never);
+
+    await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_forget_me" }),
+    );
+    expect(await kv.list("mem:evt:ses_event_id")).toHaveLength(1);
+
+    await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { sessionId: "ses_event_id" },
+    });
+
+    expect(await kv.list("mem:evt:ses_event_id")).toHaveLength(0);
+    expect(await kv.list("mem:raw:ses_event_id")).toHaveLength(0);
+    expect(await kv.list("mem:obs:ses_event_id")).toHaveLength(0);
+  });
+
+  it("re-indexes eventIds on import so retries dedup after restore", async () => {
+    const { registerExportImportFunction } = await import(
+      "../src/functions/export-import.js"
+    );
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    registerObserveFunction(sdk as never, kv as never);
+
+    const sessionId = "ses_event_id_import";
+    const raw: RawObservation = {
+      id: "obs_imported",
+      sessionId,
+      timestamp: "2026-08-11T00:00:00.000Z",
+      hookType: "prompt_submit",
+      userPrompt: "imported",
+      raw: { prompt: "imported" },
+      eventId: "evt_imported",
+    };
+
+    const importResult = (await sdk.trigger("mem::import", {
+      exportData: {
+        version: "0.9.29",
+        exportedAt: "2026-08-11T00:00:00.000Z",
+        sessions: [
+          {
+            id: sessionId,
+            project: "/workspace",
+            cwd: "/workspace",
+            startedAt: "2026-08-11T00:00:00.000Z",
+            status: "active",
+            observationCount: 1,
+          },
+        ],
+        observations: {
+          [sessionId]: [
+            {
+              id: "obs_imported",
+              sessionId,
+              timestamp: "2026-08-11T00:00:00.000Z",
+              type: "conversation",
+              title: "User prompt",
+              facts: [],
+              narrative: "imported",
+              concepts: [],
+              files: [],
+              importance: 5,
+            },
+          ],
+        },
+        rawEvents: { [sessionId]: [raw] },
+        memories: [],
+        summaries: [],
+      },
+      strategy: "merge",
+    })) as { success: boolean };
+    expect(importResult.success).toBe(true);
+
+    const index = await kv.get<EventIdIndexEntry>(
+      `mem:evt:${sessionId}`,
+      "evt_imported",
+    );
+    expect(index).toEqual({
+      eventId: "evt_imported",
+      observationId: "obs_imported",
+      at: "2026-08-11T00:00:00.000Z",
+    });
+
+    const retry = (await sdk.trigger(
+      "mem::observe",
+      basePayload({
+        sessionId,
+        eventId: "evt_imported",
+        data: { prompt: "retry after import" },
+      }),
+    )) as { deduplicated: boolean; observationId: string };
+
+    expect(retry.deduplicated).toBe(true);
+    expect(retry.observationId).toBe("obs_imported");
+    expect(await kv.list(`mem:raw:${sessionId}`)).toHaveLength(1);
   });
 });
