@@ -223,6 +223,41 @@ describe("mem::observe raw event log", () => {
     expect(derived?.title).toBe("Read");
     expect(derived?.confidence).toBe(0.3);
   });
+
+  it("rolls back raw row when derived write fails", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const store = new Map<string, Map<string, unknown>>();
+    const kv = {
+      store,
+      get: async <T>(scope: string, key: string): Promise<T | null> =>
+        (store.get(scope)?.get(key) as T) ?? null,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (scope.startsWith("mem:obs:")) {
+          throw new Error("derived write failed");
+        }
+        if (!store.has(scope)) store.set(scope, new Map());
+        store.get(scope)!.set(key, data);
+        return data;
+      },
+      delete: async (scope: string, key: string) => {
+        store.get(scope)?.delete(key);
+      },
+      list: async <T>(scope: string): Promise<T[]> => {
+        const m = store.get(scope);
+        return m ? (Array.from(m.values()) as T[]) : [];
+      },
+    };
+    registerObserveFunction(sdk as never, kv as never);
+
+    await expect(
+      sdk.trigger("mem::observe", observePayload()),
+    ).rejects.toThrow("derived write failed");
+
+    expect(store.get("mem:raw:ses_raw")?.size ?? 0).toBe(0);
+  });
 });
 
 describe("raw event deletion", () => {
@@ -280,6 +315,32 @@ describe("raw event deletion", () => {
     });
 
     expect(await kv.list("mem:raw:ses_raw")).toHaveLength(0);
+    expect(await kv.list("mem:obs:ses_raw")).toHaveLength(0);
+  });
+
+  it("mem::forget session removes orphan raw-only rows", async () => {
+    const { registerRememberFunction } = await import(
+      "../src/functions/remember.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+
+    await kv.set("mem:sessions", "ses_raw", { id: "ses_raw" });
+    await kv.set("mem:summaries", "ses_raw", { sessionId: "ses_raw" });
+    await kv.set("mem:raw:ses_raw", "obs_orphan", {
+      id: "obs_orphan",
+      sessionId: "ses_raw",
+      hookType: "prompt_submit",
+      userPrompt: "orphan raw only",
+    });
+
+    await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { sessionId: "ses_raw" },
+    });
+
+    expect(await kv.get("mem:raw:ses_raw", "obs_orphan")).toBeNull();
     expect(await kv.list("mem:obs:ses_raw")).toHaveLength(0);
   });
 

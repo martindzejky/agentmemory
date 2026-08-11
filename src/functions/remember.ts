@@ -246,6 +246,14 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(obs.id);
           deleted++;
         }
+        const orphanRaw = await kv.list<{ id: string }>(
+          KV.rawEvents(data.sessionId),
+        );
+        for (const raw of orphanRaw) {
+          await kv.delete(KV.rawEvents(data.sessionId), raw.id);
+          deletedObservationIds.push(raw.id);
+          deleted++;
+        }
         await kv.delete(KV.sessions, data.sessionId);
         await kv.delete(KV.summaries, data.sessionId);
         deletedSession = true;

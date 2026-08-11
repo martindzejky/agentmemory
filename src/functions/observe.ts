@@ -204,6 +204,15 @@ export function registerObserveFunction(
             synthetic,
           );
         } catch (error) {
+          try {
+            await kv.delete(KV.rawEvents(payload.sessionId), obsId);
+          } catch (rollbackError) {
+            logger.error("Failed to roll back raw event after observation write failure", {
+              sessionId: payload.sessionId,
+              obsId,
+              error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            });
+          }
           if (raw.imageData) {
             // Roll back the ref taken above. decrementImageRef deletes the file
             // only when no other observation still references it (deduped images
