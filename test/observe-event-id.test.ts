@@ -42,8 +42,10 @@ function mockKV() {
 
 function mockSdk() {
   const fns = new Map<string, Function>();
+  const triggered: Array<{ id: string; payload: unknown }> = [];
   return {
     fns,
+    triggered,
     registerFunction: (
       idOrOpts: string | { id: string },
       fn: Function,
@@ -60,6 +62,7 @@ function mockSdk() {
       const id =
         typeof idOrInput === "string" ? idOrInput : idOrInput.function_id;
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
+      triggered.push({ id, payload });
       const fn = fns.get(id);
       if (fn) return fn(payload);
       return null;
@@ -169,6 +172,35 @@ describe("mem::observe eventId idempotency", () => {
     const obs = await kv.list("mem:obs:ses_event_id");
     expect(obs).toHaveLength(2);
     expect(loggerWarn).toHaveBeenCalled();
+  });
+
+  it("puts eventId on stream envelopes, not on the stored observation", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never, dedupMap);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      basePayload({ eventId: "evt_stream" }),
+    )) as { observationId: string };
+
+    const stored = await kv.get<Record<string, unknown>>(
+      "mem:obs:ses_event_id",
+      result.observationId,
+    );
+    expect(stored?.["eventId"]).toBeUndefined();
+
+    const streamSet = sdk.triggered.find((t) => t.id === "stream::set");
+    const streamSend = sdk.triggered.find((t) => t.id === "stream::send");
+    expect(
+      (streamSet?.payload as { data?: { eventId?: string } })?.data?.eventId,
+    ).toBe("evt_stream");
+    expect(
+      (streamSend?.payload as { data?: { eventId?: string } })?.data?.eventId,
+    ).toBe("evt_stream");
   });
 
   it("allows the same eventId in two different sessions", async () => {

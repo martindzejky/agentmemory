@@ -120,8 +120,8 @@ export function registerObserveFunction(
       const pendingImageData = extractedImage;
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
-        // Inside the existing obs: session lock. record() stays after
-        // successful kv.set so a failed write cannot poison the key.
+        // Checked under the existing obs:session lock. record() stays
+        // after successful kv.set so a failed write cannot poison the key.
         if (eventId && dedupMap?.isDuplicate(payload.sessionId, eventId)) {
           return {
             deduplicated: true,
