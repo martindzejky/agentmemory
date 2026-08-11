@@ -91,6 +91,7 @@ function makeObs(
   idx: number,
   sessionId: string,
   timestamp: string,
+  derivedBy?: "synthetic" | "llm",
 ): CompressedObservation {
   return {
     id: `obs_${idx}`,
@@ -103,6 +104,7 @@ function makeObs(
     concepts: [],
     files: [],
     importance: 5,
+    ...(derivedBy ? { derivedBy } : {}),
   };
 }
 
@@ -392,5 +394,171 @@ describe("mem::summarize watermarks", () => {
     expect(result.success).toBe(true);
     const session = (await kv.get("sessions", sessionId)) as Session;
     expect(session.summarizedObservationCount).toBe(5);
+  });
+
+  describe("auto-compress upgrade gate", () => {
+    const recentTs = () => new Date().toISOString();
+    const oldTs = () => new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+    beforeEach(() => {
+      process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+      delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+    });
+
+    afterEach(() => {
+      delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+    });
+
+    it("skips nothing_new when the only new row is a recent synthetic", async () => {
+      const provider = makeProvider([summaryXml("unused")]);
+      const ts = recentTs();
+      const { handler, kv } = await setup({
+        observations: [makeObs(2, sessionId, ts, "synthetic")],
+        session: {
+          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventId: "obs_1",
+          summarizedObservationCount: 1,
+          summaryRevision: 1,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "existing",
+          narrative: "n",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 1,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        reason: "nothing_new",
+      });
+      expect(provider.calls).toHaveLength(0);
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_1");
+    });
+
+    it("summarizes llm rows and stops before a pending synthetic upgrade", async () => {
+      const provider = makeProvider([
+        summaryXml("partial"),
+        summaryXml("merged"),
+      ]);
+      const llmTs = recentTs();
+      const syntheticTs = new Date(Date.now() + 1000).toISOString();
+      const { handler, kv } = await setup({
+        observations: [
+          makeObs(2, sessionId, llmTs, "llm"),
+          makeObs(3, sessionId, syntheticTs, "synthetic"),
+        ],
+        session: {
+          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventId: "obs_1",
+          summarizedObservationCount: 1,
+          summaryRevision: 1,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "stored",
+          narrative: "stored narrative",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 1,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result.success).toBe(true);
+      expect(provider.calls[0]?.user).toContain("Session observations (1 total)");
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_2");
+    });
+
+    it("summarizes a synthetic row as-is once past the grace window", async () => {
+      process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"] = "60000";
+      const provider = makeProvider([
+        summaryXml("partial"),
+        summaryXml("merged"),
+      ]);
+      const { handler, kv } = await setup({
+        observations: [makeObs(2, sessionId, oldTs(), "synthetic")],
+        session: {
+          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventId: "obs_1",
+          summarizedObservationCount: 1,
+          summaryRevision: 1,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "stored",
+          narrative: "stored narrative",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 1,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result.success).toBe(true);
+      expect(provider.calls.length).toBeGreaterThan(0);
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_2");
+    });
+
+    it("does not gate when auto-compress is off", async () => {
+      delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      const provider = makeProvider([
+        summaryXml("partial"),
+        summaryXml("merged"),
+      ]);
+      const { handler, kv } = await setup({
+        observations: [
+          makeObs(2, sessionId, recentTs(), "synthetic"),
+        ],
+        session: {
+          lastSummarizedEventAt: "2026-01-01T10:00:00.000Z",
+          lastSummarizedEventId: "obs_1",
+          summarizedObservationCount: 1,
+          summaryRevision: 1,
+        },
+        storedSummary: {
+          sessionId,
+          project: "test",
+          createdAt: "2026-01-01T10:05:00.000Z",
+          title: "stored",
+          narrative: "stored narrative",
+          keyDecisions: [],
+          filesModified: [],
+          concepts: [],
+          observationCount: 1,
+        },
+        provider,
+      });
+
+      const result: any = await handler({ sessionId });
+
+      expect(result.success).toBe(true);
+      expect(provider.calls.length).toBeGreaterThan(0);
+      const session = (await kv.get("sessions", sessionId)) as Session;
+      expect(session.lastSummarizedEventId).toBe("obs_2");
+    });
   });
 });

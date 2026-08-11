@@ -11,7 +11,7 @@ import {
   isIdleSweepEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
-import { eventTimestampMs } from "./event-cursor.js";
+import { isIsoTimestampAfter } from "./event-cursor.js";
 
 export interface IdleSweepResult {
   success: true;
@@ -61,10 +61,7 @@ function hasEventPending(session: SessionRow): boolean {
   if (!session.lastSummarizedEventAt) return true;
   const newest = newestIngestedAt(session);
   if (!newest) return false;
-  const newestMs = eventTimestampMs(newest);
-  const summarizedMs = eventTimestampMs(session.lastSummarizedEventAt);
-  if (newestMs === null || summarizedMs === null) return false;
-  return newestMs > summarizedMs;
+  return isIsoTimestampAfter(newest, session.lastSummarizedEventAt);
 }
 
 function hasPendingWork(session: SessionRow): boolean {

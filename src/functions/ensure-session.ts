@@ -3,6 +3,10 @@ import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { getAgentId } from "../config.js";
+import {
+  eventTimestampMs,
+  isIsoTimestampAfter,
+} from "./event-cursor.js";
 
 export type SessionRecord = Session;
 
@@ -111,12 +115,10 @@ export async function ensureSession(
       if (typeof input.lastEventAt === "string" && input.lastEventAt.trim()) {
         const incoming = input.lastEventAt.trim();
         const current = existing.lastEventAt;
-        const incomingMs = new Date(incoming).getTime();
-        const currentMs =
-          typeof current === "string" ? new Date(current).getTime() : NaN;
         if (
-          Number.isFinite(incomingMs) &&
-          (!Number.isFinite(currentMs) || incomingMs > currentMs)
+          eventTimestampMs(incoming) !== null &&
+          (eventTimestampMs(current) === null ||
+            isIsoTimestampAfter(incoming, current))
         ) {
           updates.push({ type: "set", path: "lastEventAt", value: incoming });
         }
