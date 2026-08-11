@@ -315,9 +315,20 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           for (const o of obs) {
             obsDeletes.push({ sessionId: session.id, obsId: o.id });
           }
+          const raw = await kv
+            .list<{ id: string }>(KV.rawEvents(session.id))
+            .catch(() => []);
+          for (const r of raw) {
+            if (!obsDeletes.some((d) => d.sessionId === session.id && d.obsId === r.id)) {
+              obsDeletes.push({ sessionId: session.id, obsId: r.id });
+            }
+          }
         });
         await runChunked(obsDeletes, (d) =>
-          kv.delete(KV.observations(d.sessionId), d.obsId),
+          Promise.all([
+            kv.delete(KV.rawEvents(d.sessionId), d.obsId),
+            kv.delete(KV.observations(d.sessionId), d.obsId),
+          ]).then(() => undefined),
         );
         await runChunked(await kv.list<Memory>(KV.memories), (m) =>
           kv.delete(KV.memories, m.id),

@@ -194,10 +194,15 @@ export function registerObserveFunction(
           }
         }
 
+        let synthetic: ReturnType<typeof buildSyntheticCompression>;
         try {
-
-          await kv.set(KV.observations(payload.sessionId), obsId, raw);
-
+          await kv.set(KV.rawEvents(payload.sessionId), obsId, raw);
+          synthetic = buildSyntheticCompression(raw);
+          await kv.set(
+            KV.observations(payload.sessionId),
+            obsId,
+            synthetic,
+          );
         } catch (error) {
           if (raw.imageData) {
             // Roll back the ref taken above. decrementImageRef deletes the file
@@ -275,12 +280,6 @@ export function registerObserveFunction(
             : {}),
         });
 
-        const synthetic = buildSyntheticCompression(raw);
-        await kv.set(
-          KV.observations(payload.sessionId),
-          obsId,
-          synthetic,
-        );
         getSearchIndex().add(synthetic);
         await vectorIndexAddGuarded(
           synthetic.id,

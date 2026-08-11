@@ -214,6 +214,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               stats.lowImportanceObs++;
             } else {
               try {
+                await kv.delete(KV.rawEvents(session.id), o.id);
                 await kv.delete(KV.observations(session.id), o.id);
                 stats.lowImportanceObs++;
               } catch (err) {
@@ -257,6 +258,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
           } else {
             for (const o of toEvict) {
               try {
+                await kv.delete(KV.rawEvents(o.sessionId), o.id);
                 await kv.delete(KV.observations(o.sessionId), o.id);
                 stats.capEvictions++;
               } catch (err) {
