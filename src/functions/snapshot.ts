@@ -15,6 +15,7 @@ import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { VERSION } from "../version.js";
 import { logger } from "../logger.js";
+import { indexRawEventIfPresent } from "./event-id-index.js";
 
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 
@@ -229,6 +230,11 @@ export function registerSnapshotFunction(
           for (const [sessionId, events] of Object.entries(state.rawEvents)) {
             for (const event of events) {
               await kv.set(KV.rawEvents(sessionId), event.id, event);
+              await indexRawEventIfPresent(kv, sessionId, event as {
+                id: string;
+                eventId?: string;
+                timestamp: string;
+              });
             }
           }
         }
