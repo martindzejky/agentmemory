@@ -181,6 +181,9 @@ export function registerCompressFunction(
         );
 
         try {
+          if (getSearchIndex().has(compressed.id)) {
+            getSearchIndex().remove(compressed.id);
+          }
           getSearchIndex().add(compressed);
         } catch (err) {
           logger.warn("Failed to index compressed observation into BM25", {

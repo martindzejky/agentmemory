@@ -146,6 +146,30 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(compressCalls).toHaveLength(1);
   });
 
+  it("AGENTMEMORY_AUTO_COMPRESS=true: stores synthetic CompressedObservation before compress runs", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const payload = validPayload();
+    const result = (await sdk.trigger(
+      "mem::observe",
+      payload,
+    )) as { observationId: string };
+
+    const stored = await kv.get<{ type: string; title: string; confidence: number }>(
+      `mem:obs:${payload.sessionId}`,
+      result.observationId,
+    );
+    expect(stored?.type).toBe("file_read");
+    expect(stored?.title).toBe("Read");
+    expect(stored?.confidence).toBe(0.3);
+  });
+
   it("AGENTMEMORY_AUTO_COMPRESS=false explicitly: does NOT fire mem::compress", async () => {
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
     const { registerObserveFunction } = await import(

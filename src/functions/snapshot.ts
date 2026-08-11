@@ -66,12 +66,17 @@ export function registerSnapshotFunction(
           .catch(() => [] as AccessLogExport[]);
 
         const observations: Record<string, unknown[]> = {};
+        const rawEvents: Record<string, unknown[]> = {};
         for (const session of sessions) {
           const obs = await kv
             .list(KV.observations(session.id))
             .catch(() => []);
           if (obs.length > 0) {
             observations[session.id] = obs;
+          }
+          const raw = await kv.list(KV.rawEvents(session.id)).catch(() => []);
+          if (raw.length > 0) {
+            rawEvents[session.id] = raw;
           }
         }
 
@@ -82,6 +87,7 @@ export function registerSnapshotFunction(
           memories,
           graphNodes,
           observations,
+          rawEvents,
           accessLogs,
         };
 
@@ -190,6 +196,10 @@ export function registerSnapshotFunction(
             string,
             Array<{ id: string } & Record<string, unknown>>
           >;
+          rawEvents?: Record<
+            string,
+            Array<{ id: string } & Record<string, unknown>>
+          >;
           accessLogs?: AccessLogExport[];
         };
 
@@ -212,6 +222,13 @@ export function registerSnapshotFunction(
           for (const [sessionId, obs] of Object.entries(state.observations)) {
             for (const o of obs) {
               await kv.set(KV.observations(sessionId), o.id, o);
+            }
+          }
+        }
+        if (state.rawEvents) {
+          for (const [sessionId, events] of Object.entries(state.rawEvents)) {
+            for (const event of events) {
+              await kv.set(KV.rawEvents(sessionId), event.id, event);
             }
           }
         }

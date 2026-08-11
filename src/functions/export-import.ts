@@ -2,6 +2,7 @@ import type { ISdk } from "iii-sdk";
 import type {
   Session,
   CompressedObservation,
+  RawObservation,
   Memory,
   SessionSummary,
   ProjectProfile,
@@ -58,7 +59,7 @@ async function runChunked<T>(
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::export", 
-    async (data?: { maxSessions?: number; offset?: number }) => {
+    async (data?: { maxSessions?: number; offset?: number; includeRawEvents?: boolean }) => {
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
       const rawOffset = Number(data?.offset);
@@ -83,6 +84,23 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       for (const { sessionId, obs } of obsResults) {
         if (obs.length > 0) {
           observations[sessionId] = obs;
+        }
+      }
+
+      const rawEvents: Record<string, RawObservation[]> = {};
+      if (data?.includeRawEvents === true) {
+        const rawResults = await Promise.all(
+          paginatedSessions.map((session) =>
+            kv
+              .list<RawObservation>(KV.rawEvents(session.id))
+              .catch(() => [] as RawObservation[])
+              .then((events) => ({ sessionId: session.id, events })),
+          ),
+        );
+        for (const { sessionId, events } of rawResults) {
+          if (events.length > 0) {
+            rawEvents[sessionId] = events;
+          }
         }
       }
 
@@ -138,6 +156,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         exportedAt: new Date().toISOString(),
         sessions: paginatedSessions,
         observations,
+        ...(data?.includeRawEvents === true ? { rawEvents } : {}),
         memories,
         summaries,
         profiles: profiles.length > 0 ? profiles : undefined,
@@ -315,9 +334,20 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           for (const o of obs) {
             obsDeletes.push({ sessionId: session.id, obsId: o.id });
           }
+          const raw = await kv
+            .list<{ id: string }>(KV.rawEvents(session.id))
+            .catch(() => []);
+          for (const r of raw) {
+            if (!obsDeletes.some((d) => d.sessionId === session.id && d.obsId === r.id)) {
+              obsDeletes.push({ sessionId: session.id, obsId: r.id });
+            }
+          }
         });
         await runChunked(obsDeletes, (d) =>
-          kv.delete(KV.observations(d.sessionId), d.obsId),
+          Promise.all([
+            kv.delete(KV.rawEvents(d.sessionId), d.obsId),
+            kv.delete(KV.observations(d.sessionId), d.obsId),
+          ]).then(() => undefined),
         );
         await runChunked(await kv.list<Memory>(KV.memories), (m) =>
           kv.delete(KV.memories, m.id),
@@ -432,6 +462,26 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           stats.observations++;
           indexObs.push(o);
         });
+      }
+
+      if (importData.rawEvents) {
+        for (const [sessionId, events] of Object.entries(importData.rawEvents)) {
+          if (!Array.isArray(events)) {
+            return { success: false, error: "rawEvents values must be arrays" };
+          }
+          await runChunked(events, async (event) => {
+            if (strategy === "skip") {
+              const existing = await kv
+                .get<RawObservation>(KV.rawEvents(sessionId), event.id)
+                .catch(() => null);
+              if (existing) {
+                stats.skipped++;
+                return;
+              }
+            }
+            await kv.set(KV.rawEvents(sessionId), event.id, event);
+          });
+        }
       }
 
       await runChunked(importData.memories, async (memory) => {
