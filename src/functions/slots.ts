@@ -404,6 +404,9 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
           getCompressUpgradeGraceMs(),
         );
       }
+      if (eligible.length === 0) {
+        return { success: true, applied: 0, reason: "nothing_new" };
+      }
       const hasNew = eligible.some((obs) => isAfterCursor(obs, reflectCursor));
       if (reflectCursor && !hasNew) {
         return { success: true, applied: 0, reason: "nothing_new" };

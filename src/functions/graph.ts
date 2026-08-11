@@ -19,7 +19,7 @@ import {
 } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
-import { newestEventCursor } from "./event-cursor.js";
+import { newestEventCursor, sortByEventCursor } from "./event-cursor.js";
 import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 
@@ -618,12 +618,15 @@ export function registerGraphFunction(
           ? data.sessionId.trim()
           : undefined;
       let eligible = data.observations;
-      if (sessionId && isAutoCompressEnabled()) {
-        eligible = truncateAwaitingLlmUpgrade(
-          data.observations,
-          Date.now(),
-          getCompressUpgradeGraceMs(),
-        );
+      if (sessionId) {
+        eligible = sortByEventCursor(eligible);
+        if (isAutoCompressEnabled()) {
+          eligible = truncateAwaitingLlmUpgrade(
+            eligible,
+            Date.now(),
+            getCompressUpgradeGraceMs(),
+          );
+        }
       }
       if (eligible.length === 0) {
         if (sessionId) {

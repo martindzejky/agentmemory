@@ -925,5 +925,54 @@ describe("Graph Functions", () => {
       };
       expect(session.lastGraphExtractedEventId).toBe("obs_1");
     });
+
+    it("sorts before gating so unsorted payloads cannot skip the upgrade window", async () => {
+      process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+      const localKv = mockKV();
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+      const priorTs = "2026-01-01T10:00:00.000Z";
+      const syntheticTs = recentTs();
+      const newerLlmTs = new Date(Date.now() + 1000).toISOString();
+      await localKv.set(KV.sessions, "ses_graph", {
+        id: "ses_graph",
+        project: "p",
+        cwd: "/tmp",
+        startedAt: priorTs,
+        status: "active",
+        observationCount: 3,
+        lastGraphExtractedEventAt: priorTs,
+        lastGraphExtractedEventId: "obs_1",
+      });
+      const syntheticObs: CompressedObservation = {
+        ...testObs,
+        id: "obs_2",
+        timestamp: syntheticTs,
+        derivedBy: "synthetic",
+      };
+      const newerLlmObs: CompressedObservation = {
+        ...testObs,
+        id: "obs_3",
+        timestamp: newerLlmTs,
+        title: "Later llm row",
+        derivedBy: "llm",
+      };
+
+      const result = (await localSdk.trigger("mem::graph-extract", {
+        observations: [newerLlmObs, syntheticObs],
+        sessionId: "ses_graph",
+      })) as { success: boolean; skipped?: boolean; reason?: string };
+
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        reason: "nothing_new",
+      });
+      expect(mockProvider.compress).not.toHaveBeenCalled();
+      const session = (await localKv.get(KV.sessions, "ses_graph")) as {
+        lastGraphExtractedEventId?: string;
+      };
+      expect(session.lastGraphExtractedEventId).toBe("obs_1");
+    });
   });
 });
