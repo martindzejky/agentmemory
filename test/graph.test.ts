@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -780,5 +780,150 @@ describe("Graph Functions", () => {
 
     expect(result.success).toBe(true);
     expect(await localKv.get(KV.sessions, "ses_1")).toBeNull();
+  });
+
+  describe("auto-compress upgrade gate", () => {
+    const recentTs = () => new Date().toISOString();
+    const oldTs = () => new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+    beforeEach(() => {
+      delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+    });
+
+    afterEach(() => {
+      delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+      delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+    });
+
+    it("does not stamp graph watermark past a recent synthetic row", async () => {
+      process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+      const localKv = mockKV();
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+      const priorTs = "2026-01-01T10:00:00.000Z";
+      await localKv.set(KV.sessions, "ses_graph", {
+        id: "ses_graph",
+        project: "p",
+        cwd: "/tmp",
+        startedAt: priorTs,
+        status: "active",
+        observationCount: 2,
+        lastGraphExtractedEventAt: priorTs,
+        lastGraphExtractedEventId: "obs_1",
+      });
+
+      const result = (await localSdk.trigger("mem::graph-extract", {
+        observations: [
+          {
+            ...testObs,
+            id: "obs_2",
+            timestamp: recentTs(),
+            derivedBy: "synthetic" as const,
+          },
+        ],
+        sessionId: "ses_graph",
+      })) as { success: boolean; skipped?: boolean; reason?: string };
+
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        reason: "nothing_new",
+      });
+      expect(mockProvider.compress).not.toHaveBeenCalled();
+      const session = (await localKv.get(KV.sessions, "ses_graph")) as {
+        lastGraphExtractedEventId?: string;
+      };
+      expect(session.lastGraphExtractedEventId).toBe("obs_1");
+    });
+
+    it("extracts and stamps once a synthetic row is past the grace window", async () => {
+      process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+      const localKv = mockKV();
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+      const priorTs = "2026-01-01T10:00:00.000Z";
+      await localKv.set(KV.sessions, "ses_graph", {
+        id: "ses_graph",
+        project: "p",
+        cwd: "/tmp",
+        startedAt: priorTs,
+        status: "active",
+        observationCount: 2,
+        lastGraphExtractedEventAt: priorTs,
+        lastGraphExtractedEventId: "obs_1",
+      });
+
+      const staleObs: CompressedObservation = {
+        ...testObs,
+        id: "obs_2",
+        timestamp: oldTs(),
+        derivedBy: "synthetic",
+      };
+
+      const result = (await localSdk.trigger("mem::graph-extract", {
+        observations: [staleObs],
+        sessionId: "ses_graph",
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.compress).toHaveBeenCalled();
+      const session = (await localKv.get(KV.sessions, "ses_graph")) as {
+        lastGraphExtractedEventId?: string;
+      };
+      expect(session.lastGraphExtractedEventId).toBe("obs_2");
+    });
+
+    it("does not gate graph-extract when sessionId is omitted", async () => {
+      process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+      const localKv = mockKV();
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+
+      const result = (await localSdk.trigger("mem::graph-extract", {
+        observations: [
+          {
+            ...testObs,
+            timestamp: recentTs(),
+            derivedBy: "synthetic" as const,
+          },
+        ],
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.compress).toHaveBeenCalled();
+    });
+
+    it("does not gate graph-extract when auto-compress is off", async () => {
+      const localKv = mockKV();
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+      await localKv.set(KV.sessions, "ses_graph", {
+        id: "ses_graph",
+        project: "p",
+        cwd: "/tmp",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+        observationCount: 1,
+      });
+
+      const result = (await localSdk.trigger("mem::graph-extract", {
+        observations: [
+          {
+            ...testObs,
+            timestamp: recentTs(),
+            derivedBy: "synthetic" as const,
+          },
+        ],
+        sessionId: "ses_graph",
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.compress).toHaveBeenCalled();
+      const session = (await localKv.get(KV.sessions, "ses_graph")) as {
+        lastGraphExtractedEventId?: string;
+      };
+      expect(session.lastGraphExtractedEventId).toBe("obs_1");
+    });
   });
 });

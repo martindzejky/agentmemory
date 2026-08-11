@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { registerSlotsFunctions, DEFAULT_SLOTS, listPinnedSlots, renderPinnedContext } from "../src/functions/slots.js";
 import { KV } from "../src/state/schema.js";
 
@@ -264,5 +264,186 @@ describe("slots — reflect", () => {
       slot: { content: string };
     };
     expect(patterns.slot.content).toMatch(/errors: 2/);
+  });
+});
+
+describe("slots — reflect upgrade gate", () => {
+  let kv: ReturnType<typeof mockKV>;
+  let handlers: Record<string, (d: Record<string, unknown>) => Promise<Record<string, unknown>>>;
+
+  const sessionId = "sess_gate";
+  const obsKey = KV.observations(sessionId);
+
+  beforeEach(async () => {
+    ({ kv, handlers } = wire());
+    await waitForSeed(kv);
+    delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+  });
+
+  afterEach(() => {
+    delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    delete process.env["AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS"];
+  });
+
+  it("does not advance reflect watermark past a recent synthetic row", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const priorTs = "2026-01-01T10:00:00.000Z";
+    const recentTs = new Date().toISOString();
+    await kv.set(KV.sessions, sessionId, {
+      id: sessionId,
+      project: "p",
+      cwd: "/tmp",
+      startedAt: priorTs,
+      status: "active",
+      observationCount: 2,
+      lastReflectedEventAt: priorTs,
+      lastReflectedEventId: "obs_1",
+    });
+    await kv.set(obsKey, "obs_1", {
+      id: "obs_1",
+      sessionId,
+      timestamp: priorTs,
+      type: "conversation",
+      title: "prior",
+      facts: [],
+      narrative: "done",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "llm",
+    });
+    await kv.set(obsKey, "obs_2", {
+      id: "obs_2",
+      sessionId,
+      timestamp: recentTs,
+      type: "conversation",
+      title: "TODO: pending synthetic",
+      facts: [],
+      narrative: "todo left open",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "synthetic",
+    });
+
+    const res = (await handlers["mem::slot-reflect"]({ sessionId })) as {
+      success: boolean;
+      applied: number;
+      reason?: string;
+    };
+
+    expect(res).toMatchObject({ success: true, applied: 0, reason: "nothing_new" });
+    const session = (await kv.get(KV.sessions, sessionId)) as {
+      lastReflectedEventId?: string;
+    };
+    expect(session.lastReflectedEventId).toBe("obs_1");
+  });
+
+  it("reflects past the grace window when synthetic is stale", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const priorTs = "2026-01-01T10:00:00.000Z";
+    const oldSyntheticTs = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await kv.set(KV.sessions, sessionId, {
+      id: sessionId,
+      project: "p",
+      cwd: "/tmp",
+      startedAt: priorTs,
+      status: "active",
+      observationCount: 2,
+      lastReflectedEventAt: priorTs,
+      lastReflectedEventId: "obs_1",
+    });
+    await kv.set(obsKey, "obs_1", {
+      id: "obs_1",
+      sessionId,
+      timestamp: priorTs,
+      type: "conversation",
+      title: "prior",
+      facts: [],
+      narrative: "done",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "llm",
+    });
+    await kv.set(obsKey, "obs_2", {
+      id: "obs_2",
+      sessionId,
+      timestamp: oldSyntheticTs,
+      type: "error",
+      title: "TODO: stale synthetic",
+      facts: [],
+      narrative: "old todo",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "synthetic",
+    });
+
+    const res = (await handlers["mem::slot-reflect"]({ sessionId })) as {
+      success: boolean;
+      applied: number;
+    };
+
+    expect(res.success).toBe(true);
+    expect(res.applied).toBeGreaterThan(0);
+    const session = (await kv.get(KV.sessions, sessionId)) as {
+      lastReflectedEventId?: string;
+    };
+    expect(session.lastReflectedEventId).toBe("obs_2");
+  });
+
+  it("does not gate reflect when auto-compress is off", async () => {
+    const priorTs = "2026-01-01T10:00:00.000Z";
+    const recentTs = new Date().toISOString();
+    await kv.set(KV.sessions, sessionId, {
+      id: sessionId,
+      project: "p",
+      cwd: "/tmp",
+      startedAt: priorTs,
+      status: "active",
+      observationCount: 2,
+      lastReflectedEventAt: priorTs,
+      lastReflectedEventId: "obs_1",
+    });
+    await kv.set(obsKey, "obs_1", {
+      id: "obs_1",
+      sessionId,
+      timestamp: priorTs,
+      type: "conversation",
+      title: "prior",
+      facts: [],
+      narrative: "done",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "llm",
+    });
+    await kv.set(obsKey, "obs_2", {
+      id: "obs_2",
+      sessionId,
+      timestamp: recentTs,
+      type: "error",
+      title: "TODO: final synthetic",
+      facts: [],
+      narrative: "todo",
+      concepts: [],
+      files: [],
+      importance: 5,
+      derivedBy: "synthetic",
+    });
+
+    const res = (await handlers["mem::slot-reflect"]({ sessionId })) as {
+      success: boolean;
+      applied: number;
+    };
+
+    expect(res.success).toBe(true);
+    expect(res.applied).toBeGreaterThan(0);
+    const session = (await kv.get(KV.sessions, sessionId)) as {
+      lastReflectedEventId?: string;
+    };
+    expect(session.lastReflectedEventId).toBe("obs_2");
   });
 });

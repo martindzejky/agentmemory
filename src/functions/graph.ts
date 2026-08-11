@@ -13,9 +13,14 @@ import {
   GRAPH_EXTRACTION_SYSTEM,
   buildGraphExtractionPrompt,
 } from "../prompts/graph-extraction.js";
+import {
+  getCompressUpgradeGraceMs,
+  isAutoCompressEnabled,
+} from "../config.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { newestEventCursor } from "./event-cursor.js";
+import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
@@ -608,8 +613,27 @@ export function registerGraphFunction(
         return { success: false, error: "No observations provided" };
       }
 
+      const sessionId =
+        typeof data.sessionId === "string" && data.sessionId.trim()
+          ? data.sessionId.trim()
+          : undefined;
+      let eligible = data.observations;
+      if (sessionId && isAutoCompressEnabled()) {
+        eligible = truncateAwaitingLlmUpgrade(
+          data.observations,
+          Date.now(),
+          getCompressUpgradeGraceMs(),
+        );
+      }
+      if (eligible.length === 0) {
+        if (sessionId) {
+          return { success: true, skipped: true, reason: "nothing_new" };
+        }
+        return { success: false, error: "No observations provided" };
+      }
+
       const prompt = buildGraphExtractionPrompt(
-        data.observations.map((o) => ({
+        eligible.map((o) => ({
           title: o.title,
           narrative: o.narrative,
           concepts: o.concepts,
@@ -624,7 +648,7 @@ export function registerGraphFunction(
           prompt,
         );
 
-        const obsIds = data.observations.map((o) => o.id);
+        const obsIds = eligible.map((o) => o.id);
         const { nodes, edges } = parseGraphXml(response, obsIds);
 
         const { newNodeCount, newEdgeCount } = await persistGraphDelta(
@@ -646,11 +670,11 @@ export function registerGraphFunction(
           newEdges: newEdgeCount,
         });
 
-        if (typeof data.sessionId === "string" && data.sessionId.trim()) {
+        if (sessionId) {
           try {
-            const watermark = newestEventCursor(data.observations);
+            const watermark = newestEventCursor(eligible);
             if (watermark) {
-              const sid = data.sessionId.trim();
+              const sid = sessionId;
               await withKeyedLock(`session:${sid}`, async () => {
                 await kv.update(KV.sessions, sid, [
                   {

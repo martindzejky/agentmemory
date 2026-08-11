@@ -30,24 +30,10 @@ import {
   splitByCursor,
   sortByEventCursor,
   newestEventCursor,
-  eventTimestampMs,
   type EventCursor,
 } from "./event-cursor.js";
+import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
-
-function truncateAwaitingLlmUpgrade<T extends CompressedObservation>(
-  items: T[],
-  nowMs: number,
-  graceMs: number,
-): T[] {
-  const cutoff = items.findIndex((item) => {
-    if (item.derivedBy === "llm") return false;
-    const ts = eventTimestampMs(item.timestamp);
-    if (ts === null) return false;
-    return nowMs - ts < graceMs;
-  });
-  return cutoff < 0 ? items : items.slice(0, cutoff);
-}
 
 // Per-chunk observation budget when a session is too large to fit in one
 // LLM call. Default ≈ 50k input tokens per chunk at ~110 tok/obs — fits
