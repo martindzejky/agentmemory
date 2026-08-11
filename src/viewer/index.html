@@ -2622,14 +2622,14 @@
 
       var typeCounts = {};
       filtered.forEach(function(o) {
-        var t = o.type || TOOL_TYPE_MAP[o.toolName] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
+        var t = o.type || TOOL_TYPE_MAP[o.toolName] || HOOK_TYPE_MAP[o.hookType] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
         typeCounts[t] = (typeCounts[t] || 0) + 1;
       });
       var typeList = Object.keys(typeCounts).sort(function(a, b) { return typeCounts[b] - typeCounts[a]; });
 
       if (tlTypeFilter) {
         filtered = filtered.filter(function(o) {
-          var t = o.type || TOOL_TYPE_MAP[o.toolName] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
+          var t = o.type || TOOL_TYPE_MAP[o.toolName] || HOOK_TYPE_MAP[o.hookType] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
           return t === tlTypeFilter;
         });
       }
@@ -2862,7 +2862,7 @@
 
       var typeCounts = {};
       obs.forEach(function(o) {
-        var t = o.type || TOOL_TYPE_MAP[o.toolName] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
+        var t = o.type || TOOL_TYPE_MAP[o.toolName] || HOOK_TYPE_MAP[o.hookType] || (o.hookType ? o.hookType.replace(/_/g, ' ') : 'other');
         typeCounts[t] = (typeCounts[t] || 0) + 1;
       });
       var typeList = Object.keys(typeCounts).sort(function(a, b) { return typeCounts[b] - typeCounts[a]; });
