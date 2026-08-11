@@ -5,10 +5,11 @@ import {
   getVisibleTools,
 } from "../src/mcp/tools-registry.js";
 
-// plugin manifests advertise the full MCP tool surface. The old default was
-// AGENTMEMORY_TOOLS=core which silently capped the surface at 8 essentials
-// with no indication the rest existed. Default flipped to "all"; the lean
-// set is still accessible via AGENTMEMORY_TOOLS=core.
+// plugin manifests and README advertise 51 MCP tools. The old
+// default was AGENTMEMORY_TOOLS=core which silently capped the surface
+// at 8 essentials with no indication the other 43 existed. Default
+// flipped to "all"; the lean set is still accessible via
+// AGENTMEMORY_TOOLS=core.
 describe("MCP tool surface default (#553)", () => {
   const ORIG = process.env["AGENTMEMORY_TOOLS"];
   beforeEach(() => {
@@ -19,7 +20,7 @@ describe("MCP tool surface default (#553)", () => {
     else process.env["AGENTMEMORY_TOOLS"] = ORIG;
   });
 
-  it("default returns the full tool surface, matching plugin advertising", () => {
+  it("default returns the full 51-tool surface, matching plugin advertising", () => {
     const visible = getVisibleTools();
     const all = getAllTools();
     expect(visible.length).toBe(all.length);

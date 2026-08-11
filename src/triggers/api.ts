@@ -943,9 +943,9 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const sessionId = asNonEmptyString(req.body?.sessionId);
       if (
-        !req.body?.sessionId ||
-        typeof req.body.sessionId !== "string" ||
+        !sessionId ||
         !Array.isArray(req.body?.files) ||
         req.body.files.length === 0 ||
         !req.body.files.every((f: unknown) => typeof f === "string")
@@ -986,15 +986,19 @@ export function registerApiTriggers(
         };
       }
       const requestAgentId = normalizeRequestAgentId(req.body.agentId);
+      const toolName =
+        typeof req.body.toolName === "string" ? req.body.toolName : undefined;
       const result = await sdk.trigger({
         function_id: "mem::enrich",
         payload: {
-          sessionId: req.body.sessionId,
+          sessionId,
           files: req.body.files,
           ...(req.body.terms !== undefined && { terms: req.body.terms }),
-          ...(req.body.toolName !== undefined && { toolName: req.body.toolName }),
-          ...(req.body.project !== undefined && { project: req.body.project }),
-          ...(req.body.cwd !== undefined && { cwd: req.body.cwd }),
+          ...(toolName !== undefined && { toolName }),
+          ...(req.body.project !== undefined && {
+            project: req.body.project.trim(),
+          }),
+          ...(req.body.cwd !== undefined && { cwd: req.body.cwd.trim() }),
           ...(requestAgentId ? { agentId: requestAgentId } : {}),
         },
       });

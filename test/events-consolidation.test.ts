@@ -25,11 +25,11 @@ import {
 import { isReflectEnabled } from "../src/functions/slots.js";
 import { logger } from "../src/logger.js";
 
-// Consolidation is driven by event::session::stopped (evict / stale recovery
-// and any future flush path) plus the periodic mem::consolidate-pipeline timer.
-// /session/end is a deprecated noop and does not fan out stopped work.
-// When stopped runs, it awaits mem::summarize and may fire-and-forget
-// slot-reflect / consolidate-pipeline / auto-crystallize, each gated by config.
+// Consolidation is driven by event::session::stopped (evict / stale recovery)
+// plus the periodic mem::consolidate-pipeline timer. /session/end is a
+// deprecated noop and does not fan out stopped work. When stopped runs, it
+// awaits mem::summarize and may fire-and-forget slot-reflect /
+// consolidate-pipeline / auto-crystallize, each gated by config.
 
 function mockKV() {
   return {
@@ -255,9 +255,9 @@ function persistentKV() {
 }
 
 // Regression: event::session::stopped may still be invoked by eviction /
-// recovery (and future flush paths). consolidate-pipeline + auto-crystallize
-// are full-corpus LLM work with no internal "nothing changed" guard, so the
-// debounce bounds corpus consolidation to once per cooldown.
+// recovery. consolidate-pipeline + auto-crystallize are full-corpus LLM work
+// with no internal "nothing changed" guard, so the debounce bounds corpus
+// consolidation to once per cooldown.
 describe("session-stop consolidation debounce", () => {
   beforeEach(() => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
