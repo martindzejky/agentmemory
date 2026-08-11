@@ -229,6 +229,15 @@ export function registerObserveFunction(
               error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
             });
           }
+          try {
+            await kv.delete(KV.observations(payload.sessionId), obsId);
+          } catch (rollbackError) {
+            logger.error("Failed to roll back derived observation after observation write failure", {
+              sessionId: payload.sessionId,
+              obsId,
+              error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            });
+          }
           if (eventId) {
             try {
               await kv.delete(KV.eventIds(payload.sessionId), eventId);

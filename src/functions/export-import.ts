@@ -36,6 +36,7 @@ import { logger } from "../logger.js";
 import {
   clearEventIdIndex,
   indexRawEventIfPresent,
+  pruneEventIdIndexEntry,
 } from "./event-id-index.js";
 
 // Bounded-concurrency chunk size for the import delete/write loops. A
@@ -484,6 +485,9 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
                 return;
               }
             }
+            // Prune before overwrite so a changed/removed eventId cannot leave
+            // a stale index key pointing at this observation id.
+            await pruneEventIdIndexEntry(kv, sessionId, event.id);
             await kv.set(KV.rawEvents(sessionId), event.id, event);
             await indexRawEventIfPresent(kv, sessionId, event);
           });

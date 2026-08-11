@@ -505,4 +505,87 @@ describe("mem::observe eventId idempotency", () => {
     expect(retry.observationId).toBe("obs_imported");
     expect(await kv.list(`mem:raw:${sessionId}`)).toHaveLength(1);
   });
+
+  it("import overwrite drops the previous eventId index key", async () => {
+    const { registerExportImportFunction } = await import(
+      "../src/functions/export-import.js"
+    );
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    registerObserveFunction(sdk as never, kv as never);
+
+    const sessionId = "ses_event_id_reimport";
+    await sdk.trigger(
+      "mem::observe",
+      basePayload({
+        sessionId,
+        eventId: "evt_old",
+        data: { prompt: "original" },
+      }),
+    );
+    expect(
+      await kv.get<EventIdIndexEntry>(`mem:evt:${sessionId}`, "evt_old"),
+    ).toBeTruthy();
+
+    const existingRaw = (await kv.list<RawObservation>(
+      `mem:raw:${sessionId}`,
+    ))[0];
+    expect(existingRaw).toBeTruthy();
+
+    const updated: RawObservation = {
+      ...existingRaw,
+      eventId: "evt_new",
+      userPrompt: "updated",
+      raw: { prompt: "updated" },
+    };
+
+    const importResult = (await sdk.trigger("mem::import", {
+      exportData: {
+        version: "0.9.29",
+        exportedAt: "2026-08-11T00:00:00.000Z",
+        sessions: [
+          {
+            id: sessionId,
+            project: "/workspace",
+            cwd: "/workspace",
+            startedAt: "2026-08-11T00:00:00.000Z",
+            status: "active",
+            observationCount: 1,
+          },
+        ],
+        observations: {},
+        rawEvents: { [sessionId]: [updated] },
+        memories: [],
+        summaries: [],
+      },
+      strategy: "merge",
+    })) as { success: boolean };
+    expect(importResult.success).toBe(true);
+
+    expect(
+      await kv.get<EventIdIndexEntry>(`mem:evt:${sessionId}`, "evt_old"),
+    ).toBeNull();
+    expect(
+      await kv.get<EventIdIndexEntry>(`mem:evt:${sessionId}`, "evt_new"),
+    ).toEqual({
+      eventId: "evt_new",
+      observationId: existingRaw.id,
+      at: existingRaw.timestamp,
+    });
+
+    const staleRetry = (await sdk.trigger(
+      "mem::observe",
+      basePayload({
+        sessionId,
+        eventId: "evt_old",
+        data: { prompt: "should write again" },
+      }),
+    )) as { observationId?: string; deduplicated?: boolean };
+    expect(staleRetry.deduplicated).toBeUndefined();
+    expect(staleRetry.observationId).toBeTruthy();
+  });
 });
