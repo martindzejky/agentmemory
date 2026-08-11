@@ -138,6 +138,56 @@ describe("mem::observe raw event log", () => {
     expect(raw?.hookType).toBe("post_tool_use");
     expect(derived?.title).toBe("Read");
     expect(derived?.confidence).toBe(0.3);
+    expect(derived?.derivedBy).toBe("synthetic");
+  });
+
+  it("persists derivedBy=synthetic on the kv row from observe", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      observePayload(),
+    )) as { observationId: string };
+
+    const derived = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(derived?.derivedBy).toBe("synthetic");
+  });
+
+  it("persists derivedBy=llm on the kv row after compress upgrade", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    await registerObserveAndCompress(sdk, kv);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      observePayload(),
+    )) as { observationId: string };
+
+    const before = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(before?.derivedBy).toBe("synthetic");
+
+    await sdk.trigger({
+      function_id: "mem::compress",
+      payload: {
+        observationId: result.observationId,
+        sessionId: "ses_raw",
+      },
+    });
+
+    const after = await kv.get<CompressedObservation>(
+      "mem:obs:ses_raw",
+      result.observationId,
+    );
+    expect(after?.derivedBy).toBe("llm");
+    expect(after?.narrative).toBe("LLM compressed");
   });
 
   it("keeps raw readable after derived row is written with auto-compress", async () => {

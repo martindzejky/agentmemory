@@ -129,6 +129,9 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(obs.title).toBe("Read");
     expect(obs.files).toContain("src/foo.ts");
     expect(obs.confidence).toBe(0.3);
+    expect(
+      (entry as { derivedBy?: string }).derivedBy,
+    ).toBe("synthetic");
   });
 
   it("AGENTMEMORY_AUTO_COMPRESS=true: fires mem::compress exactly once without raw payload", async () => {

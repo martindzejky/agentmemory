@@ -181,6 +181,7 @@ export function registerCompressFunction(
           timestamp: raw.timestamp,
           ...parsed,
           confidence: qualityScore / 100,
+          derivedBy: "llm",
           ...(hasImage ? { modality: raw.modality } : {}),
           ...(imageDescription ? { imageDescription } : {}),
           ...(raw.imageData ? { imageRef: raw.imageData } : {}),
