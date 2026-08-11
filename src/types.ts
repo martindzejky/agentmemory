@@ -142,6 +142,8 @@ export interface HookPayload {
   data: unknown;
   /** Optional host agent id; stamped on lazy session create via write paths. */
   agentId?: string;
+  /** Optional client event id for ingest idempotency (retry = no-op). */
+  eventId?: string;
 }
 
 export interface ProviderConfig {

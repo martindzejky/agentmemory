@@ -1,15 +1,9 @@
-import { createHash } from "node:crypto";
-
 const TTL_MS = 5 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60_000;
 
-interface DedupEntry {
-  hash: string;
-  expiresAt: number;
-}
-
 export class DedupMap {
-  private entries = new Map<string, DedupEntry>();
+  /** sessionId -> eventId -> expiresAt — nested so ids may contain ':' safely */
+  private entries = new Map<string, Map<string, number>>();
   private cleanupTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -17,33 +11,35 @@ export class DedupMap {
     this.cleanupTimer.unref();
   }
 
-  computeHash(sessionId: string, toolName: string, toolInput: unknown): string {
-    const input =
-      typeof toolInput === "string"
-        ? toolInput.slice(0, 500)
-        : JSON.stringify(toolInput ?? "").slice(0, 500);
-    const raw = `${sessionId}:${toolName}:${input}`;
-    return createHash("sha256").update(raw).digest("hex");
-  }
-
-  isDuplicate(hash: string): boolean {
-    const entry = this.entries.get(hash);
-    if (!entry) return false;
-    if (Date.now() > entry.expiresAt) {
-      this.entries.delete(hash);
+  isDuplicate(sessionId: string, eventId: string): boolean {
+    const session = this.entries.get(sessionId);
+    if (!session) return false;
+    const expiresAt = session.get(eventId);
+    if (expiresAt === undefined) return false;
+    if (Date.now() > expiresAt) {
+      session.delete(eventId);
+      if (session.size === 0) this.entries.delete(sessionId);
       return false;
     }
     return true;
   }
 
-  record(hash: string): void {
-    this.entries.set(hash, { hash, expiresAt: Date.now() + TTL_MS });
+  record(sessionId: string, eventId: string): void {
+    let session = this.entries.get(sessionId);
+    if (!session) {
+      session = new Map();
+      this.entries.set(sessionId, session);
+    }
+    session.set(eventId, Date.now() + TTL_MS);
   }
 
   private cleanup(): void {
     const now = Date.now();
-    for (const [key, entry] of this.entries) {
-      if (now > entry.expiresAt) this.entries.delete(key);
+    for (const [sessionId, session] of this.entries) {
+      for (const [eventId, expiresAt] of session) {
+        if (now > expiresAt) session.delete(eventId);
+      }
+      if (session.size === 0) this.entries.delete(sessionId);
     }
   }
 
@@ -52,6 +48,8 @@ export class DedupMap {
   }
 
   get size(): number {
-    return this.entries.size;
+    let n = 0;
+    for (const session of this.entries.values()) n += session.size;
+    return n;
   }
 }

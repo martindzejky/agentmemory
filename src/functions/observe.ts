@@ -61,21 +61,16 @@ export function registerObserveFunction(
 
       const obsId = generateId("obs");
 
-      let dedupHash: string | undefined;
-      if (dedupMap) {
-        const d =
-          typeof payload.data === "object" && payload.data !== null
-            ? (payload.data as Record<string, unknown>)
-            : {};
-        const toolName = (d["tool_name"] as string) || payload.hookType;
-        dedupHash = dedupMap.computeHash(
-          payload.sessionId,
-          toolName,
-          d["tool_input"],
-        );
-        if (dedupMap.isDuplicate(dedupHash)) {
-          return { deduplicated: true, sessionId: payload.sessionId };
-        }
+      const eventId =
+        typeof payload.eventId === "string" && payload.eventId.trim().length > 0
+          ? payload.eventId.trim()
+          : undefined;
+
+      if (!eventId) {
+        logger.warn("Observation accepted without eventId", {
+          sessionId: payload.sessionId,
+          hookType: payload.hookType,
+        });
       }
 
       let sanitizedRaw: unknown = payload.data;
@@ -125,6 +120,16 @@ export function registerObserveFunction(
       const pendingImageData = extractedImage;
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
+        // Checked under the existing obs:session lock. record() stays
+        // after successful kv.set so a failed write cannot poison the key.
+        if (eventId && dedupMap?.isDuplicate(payload.sessionId, eventId)) {
+          return {
+            deduplicated: true,
+            sessionId: payload.sessionId,
+            eventId,
+          };
+        }
+
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           const existing = await kv.list(KV.observations(payload.sessionId));
           if (existing.length >= maxObservationsPerSession) {
@@ -201,8 +206,8 @@ export function registerObserveFunction(
           throw error;
         }
 
-        if (dedupMap && dedupHash) {
-          dedupMap.record(dedupHash);
+        if (eventId && dedupMap) {
+          dedupMap.record(payload.sessionId, eventId);
         }
 
         await sdk.trigger({
@@ -211,7 +216,11 @@ export function registerObserveFunction(
           stream_name: STREAM.name,
           group_id: STREAM.group(payload.sessionId),
           item_id: obsId,
-          data: { type: "raw", observation: raw },
+          data: {
+            type: "raw",
+            observation: raw,
+            ...(eventId ? { eventId } : {}),
+          },
           },
         });
 
@@ -222,7 +231,12 @@ export function registerObserveFunction(
             group_id: STREAM.viewerGroup,
             id: `raw-${obsId}`,
             type: "raw_observation",
-            data: { type: "raw", observation: raw, sessionId: payload.sessionId },
+            data: {
+              type: "raw",
+              observation: raw,
+              sessionId: payload.sessionId,
+              ...(eventId ? { eventId } : {}),
+            },
           },
           action: TriggerAction.Void(),
         });
