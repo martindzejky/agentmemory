@@ -116,6 +116,12 @@ export function registerCompressFunction(
           ? `[Image Description]: ${imageDescription}\n\n${data.raw.toolOutput ?? ""}`
           : data.raw.toolOutput,
         userPrompt: data.raw.userPrompt,
+        assistantResponse: data.raw.assistantResponse,
+        subagentId: data.raw.subagentId,
+        subagentType: data.raw.subagentType,
+        subagentTask: data.raw.subagentTask,
+        subagentStatus: data.raw.subagentStatus,
+        subagentSummary: data.raw.subagentSummary,
         timestamp: data.raw.timestamp,
       });
 

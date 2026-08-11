@@ -7,6 +7,7 @@ const HookTypeEnum = z.enum([
   "post_tool_use",
   "post_tool_failure",
   "pre_compact",
+  "assistant_response",
   "subagent_start",
   "subagent_stop",
   "notification",

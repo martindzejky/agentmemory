@@ -33,6 +33,12 @@ export function buildCompressionPrompt(observation: {
   toolInput?: unknown;
   toolOutput?: unknown;
   userPrompt?: string;
+  assistantResponse?: string;
+  subagentId?: string;
+  subagentType?: string;
+  subagentTask?: string;
+  subagentStatus?: string;
+  subagentSummary?: string;
   timestamp: string;
 }): string {
   const parts = [
@@ -57,6 +63,28 @@ export function buildCompressionPrompt(observation: {
   }
   if (observation.userPrompt) {
     parts.push(`User prompt:\n${truncate(observation.userPrompt, 2000)}`);
+  }
+  if (observation.assistantResponse) {
+    parts.push(
+      `Assistant response:\n${truncate(observation.assistantResponse, 4000)}`,
+    );
+  }
+  if (observation.subagentId) {
+    parts.push(`Subagent id: ${observation.subagentId}`);
+  }
+  if (observation.subagentType) {
+    parts.push(`Subagent type: ${observation.subagentType}`);
+  }
+  if (observation.subagentTask) {
+    parts.push(`Subagent task:\n${truncate(observation.subagentTask, 2000)}`);
+  }
+  if (observation.subagentStatus) {
+    parts.push(`Subagent status: ${observation.subagentStatus}`);
+  }
+  if (observation.subagentSummary) {
+    parts.push(
+      `Subagent summary:\n${truncate(observation.subagentSummary, 2000)}`,
+    );
   }
 
   return parts.join("\n\n");

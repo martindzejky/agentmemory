@@ -40,6 +40,11 @@ export interface RawObservation {
   toolOutput?: unknown;
   userPrompt?: string;
   assistantResponse?: string;
+  subagentId?: string;
+  subagentType?: string;
+  subagentTask?: string;
+  subagentStatus?: string;
+  subagentSummary?: string;
   raw: unknown;
   modality?: "text" | "image" | "mixed";
   imageData?: string;
@@ -126,6 +131,7 @@ export type HookType =
   | "post_tool_use"
   | "post_tool_failure"
   | "pre_compact"
+  | "assistant_response"
   | "subagent_start"
   | "subagent_stop"
   | "notification"

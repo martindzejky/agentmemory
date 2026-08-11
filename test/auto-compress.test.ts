@@ -243,4 +243,53 @@ describe("buildSyntheticCompression", () => {
     });
     expect(synth.type).toBe("error");
   });
+
+  it("maps assistant_response and subagent lifecycle to readable titles", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const assistant = buildSyntheticCompression({
+      id: "obs_5",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "assistant_response",
+      assistantResponse: "Done. The tests pass.",
+      raw: {},
+    });
+    expect(assistant.type).toBe("conversation");
+    expect(assistant.title).toBe("Assistant response");
+    expect(assistant.narrative).toContain("Done. The tests pass.");
+
+    const start = buildSyntheticCompression({
+      id: "obs_6",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "subagent_start",
+      subagentId: "sa_6",
+      subagentType: "explore",
+      subagentTask: "Scan replay timeline",
+      raw: {},
+    });
+    expect(start.type).toBe("subagent");
+    expect(start.title).toBe("Subagent start: explore");
+    expect(start.narrative).toContain("id=sa_6");
+    expect(start.narrative).toContain("Scan replay timeline");
+
+    const stop = buildSyntheticCompression({
+      id: "obs_7",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "subagent_stop",
+      subagentId: "sa_7",
+      subagentType: "explore",
+      subagentStatus: "completed",
+      subagentSummary: "Found the response kind mapping",
+      raw: {},
+    });
+    expect(stop.type).toBe("subagent");
+    expect(stop.title).toBe("Subagent stop: explore");
+    expect(stop.narrative).toContain("id=sa_7");
+    expect(stop.narrative).toContain("completed");
+    expect(stop.narrative).toContain("Found the response kind mapping");
+  });
 });

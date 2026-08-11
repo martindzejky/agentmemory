@@ -105,10 +105,23 @@ export function registerObserveFunction(
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
         }
+        if (payload.hookType === "assistant_response") {
+          raw.assistantResponse = d["assistantResponse"] as string | undefined;
+        }
+        if (
+          payload.hookType === "subagent_start" ||
+          payload.hookType === "subagent_stop"
+        ) {
+          raw.subagentId = d["subagent_id"] as string | undefined;
+          raw.subagentType = d["subagent_type"] as string | undefined;
+          raw.subagentTask = d["task"] as string | undefined;
+          raw.subagentStatus = d["status"] as string | undefined;
+          raw.subagentSummary = d["summary"] as string | undefined;
+        }
 
         extractedImage = extractImage(sanitizedRaw);
         if (extractedImage) {
-          raw.modality = (raw.toolInput || raw.toolOutput || raw.userPrompt) ? "mixed" : "image";
+          raw.modality = (raw.toolInput || raw.toolOutput || raw.userPrompt || raw.assistantResponse) ? "mixed" : "image";
         }
       } else if (typeof sanitizedRaw === "string") {
         extractedImage = extractImage(sanitizedRaw);

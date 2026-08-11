@@ -41,6 +41,13 @@ By default localhost is open and no auth is needed. When `AGENTMEMORY_SECRET` is
 
 Idempotency is best-effort within a 5-minute in-process window. It does not survive restarts, TTL expiry, or multiple replicas — not a durable guarantee.
 
+Lifted `data` keys by `hookType` (these feed compression; unlisted keys stay in the opaque blob):
+
+- `prompt_submit` — `prompt`
+- `post_tool_use` / `post_tool_failure` — `tool_name`, `tool_input`, `tool_output` (or `error`)
+- `assistant_response` — `assistantResponse`
+- `subagent_start` / `subagent_stop` — `subagent_id`, `subagent_type`, `task`, `status`, `summary`
+
 ## See also
 
 - agentmemory-mcp-tools for the MCP equivalents.
