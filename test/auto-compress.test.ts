@@ -265,12 +265,14 @@ describe("buildSyntheticCompression", () => {
       sessionId: "ses_1",
       timestamp: new Date().toISOString(),
       hookType: "subagent_start",
+      subagentId: "sa_6",
       subagentType: "explore",
       subagentTask: "Scan replay timeline",
       raw: {},
     });
     expect(start.type).toBe("subagent");
     expect(start.title).toBe("Subagent start: explore");
+    expect(start.narrative).toContain("id=sa_6");
     expect(start.narrative).toContain("Scan replay timeline");
 
     const stop = buildSyntheticCompression({
@@ -278,6 +280,7 @@ describe("buildSyntheticCompression", () => {
       sessionId: "ses_1",
       timestamp: new Date().toISOString(),
       hookType: "subagent_stop",
+      subagentId: "sa_7",
       subagentType: "explore",
       subagentStatus: "completed",
       subagentSummary: "Found the response kind mapping",
@@ -285,6 +288,7 @@ describe("buildSyntheticCompression", () => {
     });
     expect(stop.type).toBe("subagent");
     expect(stop.title).toBe("Subagent stop: explore");
+    expect(stop.narrative).toContain("id=sa_7");
     expect(stop.narrative).toContain("completed");
     expect(stop.narrative).toContain("Found the response kind mapping");
   });

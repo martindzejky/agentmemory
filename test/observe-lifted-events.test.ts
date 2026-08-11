@@ -144,6 +144,7 @@ describe("mem::observe lifted event types", () => {
     );
     expect(stored?.type).toBe("subagent");
     expect(stored?.title.toLowerCase()).toContain("explore");
+    expect(stored?.narrative).toContain("id=sa_1");
     expect(stored?.narrative).toContain("explore");
     expect(stored?.narrative).toContain("Find where HookType is defined");
   });
@@ -174,6 +175,7 @@ describe("mem::observe lifted event types", () => {
       result.observationId,
     );
     expect(stored?.type).toBe("subagent");
+    expect(stored?.narrative).toContain("id=sa_1");
     expect(stored?.narrative).toContain("completed");
     expect(stored?.narrative).toContain("Located HookType in src/types.ts");
   });

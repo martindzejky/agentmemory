@@ -99,6 +99,7 @@ export function buildSyntheticCompression(
   const promptStr = raw.userPrompt ?? "";
   const responseStr = raw.assistantResponse ?? "";
   const subagentParts = [
+    raw.subagentId ? `id=${raw.subagentId}` : "",
     raw.subagentType ? `type=${raw.subagentType}` : "",
     raw.subagentTask ?? "",
     raw.subagentStatus ? `status=${raw.subagentStatus}` : "",

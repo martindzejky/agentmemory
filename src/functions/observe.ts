@@ -121,7 +121,7 @@ export function registerObserveFunction(
 
         extractedImage = extractImage(sanitizedRaw);
         if (extractedImage) {
-          raw.modality = (raw.toolInput || raw.toolOutput || raw.userPrompt) ? "mixed" : "image";
+          raw.modality = (raw.toolInput || raw.toolOutput || raw.userPrompt || raw.assistantResponse) ? "mixed" : "image";
         }
       } else if (typeof sanitizedRaw === "string") {
         extractedImage = extractImage(sanitizedRaw);
