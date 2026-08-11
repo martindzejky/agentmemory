@@ -275,10 +275,42 @@ export function registerObserveFunction(
             : {}),
         });
 
-        // Per-observation LLM compression is opt-in as of 0.8.8.
-        // Default path: build a zero-LLM synthetic compression so recall
-        // and BM25 search still work without burning the user's Claude
-        // token allocation on every tool invocation.
+        const synthetic = buildSyntheticCompression(raw);
+        await kv.set(
+          KV.observations(payload.sessionId),
+          obsId,
+          synthetic,
+        );
+        getSearchIndex().add(synthetic);
+        await vectorIndexAddGuarded(
+          synthetic.id,
+          synthetic.sessionId,
+          synthetic.title + " " + (synthetic.narrative || ""),
+          { kind: "synthetic", logId: synthetic.id },
+        );
+        await sdk.trigger({
+          function_id: "stream::set",
+          payload: {
+            stream_name: STREAM.name,
+            group_id: STREAM.group(payload.sessionId),
+            item_id: obsId,
+            data: { type: "compressed", observation: synthetic },
+          },
+        });
+        await sdk.trigger({
+          function_id: "stream::set",
+          payload: {
+            stream_name: STREAM.name,
+            group_id: STREAM.viewerGroup,
+            item_id: obsId,
+            data: {
+              type: "compressed",
+              observation: synthetic,
+              sessionId: payload.sessionId,
+            },
+          },
+        });
+
         if (isAutoCompressEnabled()) {
           await sdk.trigger({
             function_id: "mem::compress",
@@ -288,42 +320,6 @@ export function registerObserveFunction(
               raw,
             },
             action: TriggerAction.Void(),
-          });
-        } else {
-          const synthetic = buildSyntheticCompression(raw);
-          await kv.set(
-            KV.observations(payload.sessionId),
-            obsId,
-            synthetic,
-          );
-          getSearchIndex().add(synthetic);
-          await vectorIndexAddGuarded(
-            synthetic.id,
-            synthetic.sessionId,
-            synthetic.title + " " + (synthetic.narrative || ""),
-            { kind: "synthetic", logId: synthetic.id },
-          );
-          await sdk.trigger({
-            function_id: "stream::set",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.group(payload.sessionId),
-              item_id: obsId,
-              data: { type: "compressed", observation: synthetic },
-            },
-          });
-          await sdk.trigger({
-            function_id: "stream::set",
-            payload: {
-              stream_name: STREAM.name,
-              group_id: STREAM.viewerGroup,
-              item_id: obsId,
-              data: {
-                type: "compressed",
-                observation: synthetic,
-                sessionId: payload.sessionId,
-              },
-            },
           });
         }
 
