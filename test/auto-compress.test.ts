@@ -131,7 +131,7 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(obs.confidence).toBe(0.3);
   });
 
-  it("AGENTMEMORY_AUTO_COMPRESS=true: fires mem::compress exactly once", async () => {
+  it("AGENTMEMORY_AUTO_COMPRESS=true: fires mem::compress exactly once without raw payload", async () => {
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
     const { registerObserveFunction } = await import(
       "../src/functions/observe.js"
@@ -144,6 +144,13 @@ describe("mem::observe auto-compress gate (#138)", () => {
 
     const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
     expect(compressCalls).toHaveLength(1);
+    expect(compressCalls[0]!.data).toEqual({
+      observationId: expect.any(String),
+      sessionId: "ses_test",
+    });
+    expect(
+      (compressCalls[0]!.data as Record<string, unknown>)["raw"],
+    ).toBeUndefined();
   });
 
   it("AGENTMEMORY_AUTO_COMPRESS=true: stores synthetic CompressedObservation before compress runs", async () => {

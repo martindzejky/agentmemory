@@ -74,27 +74,40 @@ export function registerCompressFunction(
     async (data: {
       observationId: string;
       sessionId: string;
-      raw: RawObservation;
+      raw?: RawObservation;
     }) => {
       const startMs = Date.now();
 
-      let imageDescription: string | undefined;
-      const hasImage = data.raw.modality === "image" || data.raw.modality === "mixed";
+      const storedRaw = await kv.get<RawObservation>(
+        KV.rawEvents(data.sessionId),
+        data.observationId,
+      );
+      const raw = storedRaw ?? data.raw;
+      if (!raw) {
+        logger.warn("Compress aborted — raw event not found", {
+          obsId: data.observationId,
+          sessionId: data.sessionId,
+        });
+        return { success: false, error: "raw_not_found" };
+      }
 
-      if (hasImage && data.raw.imageData && provider.describeImage) {
+      let imageDescription: string | undefined;
+      const hasImage = raw.modality === "image" || raw.modality === "mixed";
+
+      if (hasImage && raw.imageData && provider.describeImage) {
         try {
-          let base64Data = data.raw.imageData;
+          let base64Data = raw.imageData;
           let mimeType = "image/png";
 
-          if (!data.raw.imageData.startsWith("/9j/") && !data.raw.imageData.startsWith("iVBOR")) {
-            if (!isManagedImagePath(data.raw.imageData)) {
-              throw new Error(`Refusing to read image outside managed store: ${data.raw.imageData}`);
+          if (!raw.imageData.startsWith("/9j/") && !raw.imageData.startsWith("iVBOR")) {
+            if (!isManagedImagePath(raw.imageData)) {
+              throw new Error(`Refusing to read image outside managed store: ${raw.imageData}`);
             }
-            const fileBuffer = readFileSync(data.raw.imageData);
+            const fileBuffer = readFileSync(raw.imageData);
             base64Data = fileBuffer.toString("base64");
-            if (data.raw.imageData.endsWith(".jpg") || data.raw.imageData.endsWith(".jpeg")) mimeType = "image/jpeg";
-            else if (data.raw.imageData.endsWith(".webp")) mimeType = "image/webp";
-            else if (data.raw.imageData.endsWith(".gif")) mimeType = "image/gif";
+            if (raw.imageData.endsWith(".jpg") || raw.imageData.endsWith(".jpeg")) mimeType = "image/jpeg";
+            else if (raw.imageData.endsWith(".webp")) mimeType = "image/webp";
+            else if (raw.imageData.endsWith(".gif")) mimeType = "image/gif";
           }
 
           imageDescription = await provider.describeImage(base64Data, mimeType, VISION_DESCRIPTION_PROMPT);
@@ -109,20 +122,20 @@ export function registerCompressFunction(
       }
 
       const prompt = buildCompressionPrompt({
-        hookType: data.raw.hookType,
-        toolName: data.raw.toolName,
-        toolInput: data.raw.toolInput,
+        hookType: raw.hookType,
+        toolName: raw.toolName,
+        toolInput: raw.toolInput,
         toolOutput: imageDescription
-          ? `[Image Description]: ${imageDescription}\n\n${data.raw.toolOutput ?? ""}`
-          : data.raw.toolOutput,
-        userPrompt: data.raw.userPrompt,
-        assistantResponse: data.raw.assistantResponse,
-        subagentId: data.raw.subagentId,
-        subagentType: data.raw.subagentType,
-        subagentTask: data.raw.subagentTask,
-        subagentStatus: data.raw.subagentStatus,
-        subagentSummary: data.raw.subagentSummary,
-        timestamp: data.raw.timestamp,
+          ? `[Image Description]: ${imageDescription}\n\n${raw.toolOutput ?? ""}`
+          : raw.toolOutput,
+        userPrompt: raw.userPrompt,
+        assistantResponse: raw.assistantResponse,
+        subagentId: raw.subagentId,
+        subagentType: raw.subagentType,
+        subagentTask: raw.subagentTask,
+        subagentStatus: raw.subagentStatus,
+        subagentSummary: raw.subagentSummary,
+        timestamp: raw.timestamp,
       });
 
       try {
@@ -165,13 +178,13 @@ export function registerCompressFunction(
         const compressed: CompressedObservation = {
           id: data.observationId,
           sessionId: data.sessionId,
-          timestamp: data.raw.timestamp,
+          timestamp: raw.timestamp,
           ...parsed,
           confidence: qualityScore / 100,
-          ...(hasImage ? { modality: data.raw.modality } : {}),
+          ...(hasImage ? { modality: raw.modality } : {}),
           ...(imageDescription ? { imageDescription } : {}),
-          ...(data.raw.imageData ? { imageRef: data.raw.imageData } : {}),
-          ...(data.raw.agentId ? { agentId: data.raw.agentId } : {}),
+          ...(raw.imageData ? { imageRef: raw.imageData } : {}),
+          ...(raw.agentId ? { agentId: raw.agentId } : {}),
         };
 
         await kv.set(

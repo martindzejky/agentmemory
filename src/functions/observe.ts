@@ -371,7 +371,6 @@ export function registerObserveFunction(
             payload: {
               observationId: obsId,
               sessionId: payload.sessionId,
-              raw,
             },
             action: TriggerAction.Void(),
           });
