@@ -588,6 +588,111 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/replay/import-jsonl", http_method: "POST" },
   });
 
+  sdk.registerFunction("api::replay::import-cursor-session",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      if (!sessionId) {
+        return {
+          status_code: 400,
+          body: { error: "sessionId is required" },
+        };
+      }
+
+      const hasTranscript = typeof body.transcript === "string";
+      const hasMessages = Array.isArray(body.messages);
+      if (!hasTranscript && !hasMessages) {
+        return {
+          status_code: 400,
+          body: { error: "transcript or messages is required" },
+        };
+      }
+
+      let source: "cursor-local" | "cursor-cloud" | undefined;
+      if (body.source !== undefined) {
+        if (body.source !== "cursor-local" && body.source !== "cursor-cloud") {
+          return {
+            status_code: 400,
+            body: {
+              error: 'source must be "cursor-local" or "cursor-cloud"',
+            },
+          };
+        }
+        source = body.source;
+      }
+
+      const payload: {
+        sessionId: string;
+        project?: string;
+        cwd?: string;
+        source?: "cursor-local" | "cursor-cloud";
+        agentId?: string;
+        transcript?: string;
+        messages?: Array<{
+          id?: string;
+          type?: string;
+          role?: string;
+          text?: string;
+        }>;
+      } = { sessionId };
+
+      if (typeof body.project === "string" && body.project.trim()) {
+        payload.project = body.project.trim();
+      }
+      if (typeof body.cwd === "string" && body.cwd.trim()) {
+        payload.cwd = body.cwd.trim();
+      }
+      if (source) payload.source = source;
+
+      const requestAgentId = normalizeRequestAgentId(body.agentId);
+      if (requestAgentId) payload.agentId = requestAgentId;
+
+      if (hasTranscript) {
+        payload.transcript = body.transcript as string;
+      }
+      if (hasMessages) {
+        const messages: Array<{
+          id?: string;
+          type?: string;
+          role?: string;
+          text?: string;
+        }> = [];
+        for (const item of body.messages as unknown[]) {
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          const m = item as Record<string, unknown>;
+          const row: {
+            id?: string;
+            type?: string;
+            role?: string;
+            text?: string;
+          } = {};
+          if (typeof m.id === "string") row.id = m.id;
+          if (typeof m.type === "string") row.type = m.type;
+          if (typeof m.role === "string") row.role = m.role;
+          if (typeof m.text === "string") row.text = m.text;
+          messages.push(row);
+        }
+        payload.messages = messages;
+      }
+
+      const result = await sdk.trigger({
+        function_id: "mem::replay::import-cursor-session",
+        payload,
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::replay::import-cursor-session",
+    config: {
+      api_path: "/agentmemory/replay/import-cursor-session",
+      http_method: "POST",
+    },
+  });
+
   sdk.registerFunction("api::session::start",
     async (
       req: ApiRequest<{ sessionId: string; project: string; cwd: string }>,
