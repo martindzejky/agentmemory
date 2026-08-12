@@ -118,6 +118,40 @@ function asNonEmptyString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+const MAX_BULK_OBSERVATIONS = 500;
+
+function parseObservePayload(
+  body: Record<string, unknown>,
+): { ok: true; payload: HookPayload } | { ok: false; error: string } {
+  const hookType = asNonEmptyString(body.hookType);
+  const sessionId = asNonEmptyString(body.sessionId);
+  const project = asNonEmptyString(body.project);
+  const cwd = asNonEmptyString(body.cwd);
+  const timestamp = asNonEmptyString(body.timestamp);
+  if (!hookType || !sessionId || !project || !cwd || !timestamp) {
+    return {
+      ok: false,
+      error:
+        "hookType, sessionId, project, cwd, and timestamp are required strings",
+    };
+  }
+  const requestAgentId = normalizeRequestAgentId(body.agentId);
+  const eventId = asNonEmptyString(body.eventId);
+  return {
+    ok: true,
+    payload: {
+      hookType: hookType as HookPayload["hookType"],
+      sessionId,
+      project,
+      cwd,
+      timestamp,
+      data: body.data,
+      ...(requestAgentId ? { agentId: requestAgentId } : {}),
+      ...(eventId ? { eventId } : {}),
+    },
+  };
+}
+
 function parseOptionalFiniteNumber(value: unknown): number | undefined | null {
   if (value === undefined || value === null) return undefined;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -288,33 +322,14 @@ export function registerApiTriggers(
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const hookType = asNonEmptyString(body.hookType);
-      const sessionId = asNonEmptyString(body.sessionId);
-      const project = asNonEmptyString(body.project);
-      const cwd = asNonEmptyString(body.cwd);
-      const timestamp = asNonEmptyString(body.timestamp);
-      if (!hookType || !sessionId || !project || !cwd || !timestamp) {
-        return {
-          status_code: 400,
-          body: {
-            error:
-              "hookType, sessionId, project, cwd, and timestamp are required strings",
-          },
-        };
+      const parsed = parseObservePayload(body);
+      if (!parsed.ok) {
+        return { status_code: 400, body: { error: parsed.error } };
       }
-      const requestAgentId = normalizeRequestAgentId(body.agentId);
-      const eventId = asNonEmptyString(body.eventId);
-      const payload: HookPayload = {
-        hookType: hookType as HookPayload["hookType"],
-        sessionId,
-        project,
-        cwd,
-        timestamp,
-        data: body.data,
-        ...(requestAgentId ? { agentId: requestAgentId } : {}),
-        ...(eventId ? { eventId } : {}),
-      };
-      const result = await sdk.trigger({ function_id: "mem::observe", payload });
+      const result = await sdk.trigger({
+        function_id: "mem::observe",
+        payload: parsed.payload,
+      });
       return { status_code: 201, body: result };
     },
   );
@@ -323,6 +338,114 @@ export function registerApiTriggers(
     function_id: "api::observe",
     config: {
       api_path: "/agentmemory/observe",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction("api::observe::bulk",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const observations = body.observations;
+      if (!Array.isArray(observations) || observations.length === 0) {
+        return {
+          status_code: 400,
+          body: { error: "observations must be a non-empty array" },
+        };
+      }
+      if (observations.length > MAX_BULK_OBSERVATIONS) {
+        return {
+          status_code: 400,
+          body: {
+            error: `observations exceeds max length of ${MAX_BULK_OBSERVATIONS}`,
+          },
+        };
+      }
+
+      const payloads: HookPayload[] = [];
+      for (let i = 0; i < observations.length; i++) {
+        const item = observations[i];
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return {
+            status_code: 400,
+            body: {
+              error: `observations[${i}]: hookType, sessionId, project, cwd, and timestamp are required strings`,
+            },
+          };
+        }
+        const parsed = parseObservePayload(item as Record<string, unknown>);
+        if (!parsed.ok) {
+          return {
+            status_code: 400,
+            body: { error: `observations[${i}]: ${parsed.error}` },
+          };
+        }
+        payloads.push(parsed.payload);
+      }
+
+      let imported = 0;
+      let deduplicated = 0;
+      let failed = 0;
+      const errors: Array<{ index: number; eventId?: string; error: string }> =
+        [];
+
+      for (let i = 0; i < payloads.length; i++) {
+        const payload = payloads[i]!;
+        try {
+          const result = (await sdk.trigger({
+            function_id: "mem::observe",
+            payload,
+          })) as {
+            deduplicated?: boolean;
+            success?: boolean;
+            error?: string;
+          } | null;
+
+          if (result && result.deduplicated === true) {
+            deduplicated += 1;
+            continue;
+          }
+          if (result && result.success === false) {
+            failed += 1;
+            errors.push({
+              index: i,
+              ...(payload.eventId ? { eventId: payload.eventId } : {}),
+              error:
+                typeof result.error === "string" && result.error
+                  ? result.error
+                  : "observe failed",
+            });
+            continue;
+          }
+          imported += 1;
+        } catch (err) {
+          failed += 1;
+          errors.push({
+            index: i,
+            ...(payload.eventId ? { eventId: payload.eventId } : {}),
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return {
+        status_code: 200,
+        body: {
+          success: true,
+          total: payloads.length,
+          imported,
+          deduplicated,
+          failed,
+          ...(errors.length > 0 ? { errors } : {}),
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::observe::bulk",
+    config: {
+      api_path: "/agentmemory/observe/bulk",
       http_method: "POST",
       middleware_function_ids: ["middleware::api-auth"],
     },

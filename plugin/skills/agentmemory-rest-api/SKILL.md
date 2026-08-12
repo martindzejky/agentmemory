@@ -37,6 +37,8 @@ By default localhost is open and no auth is needed. When `AGENTMEMORY_SECRET` is
 
 `POST /agentmemory/observe` requires `hookType`, `sessionId`, `project`, `cwd`, and `timestamp`. Optional: `agentId`, `data`, and `eventId`.
 
+`POST /agentmemory/observe/bulk` accepts `{ "observations": [ ... ] }` with the same per-item fields. Validates all items first (400 before any write), then calls `mem::observe` in series (max 500). Response: `{ success, total, imported, deduplicated, failed, errors? }`.
+
 `eventId` is the client idempotency key. A repeat of the same `eventId` for the same session is a no-op (`deduplicated: true`, plus the original `observationId`). Identical content with different `eventId`s both persist. Omitting `eventId` always writes; content/time-window ingest dedup is gone. Recommended for retries, not required.
 
 Idempotency is durable across restarts (no TTL): the server indexes `eventId` in KV for as long as the raw event exists, so a retry after the first write has landed dedups on any replica. Concurrent same-`eventId` delivery to different replicas can still double-write. Pruned when the event is pruned.
