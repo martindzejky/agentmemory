@@ -9,7 +9,6 @@ import {
   getCompressUpgradeGraceMs,
   isAutoCompressEnabled,
   isConsolidationEnabled,
-  isGraphExtractionEnabled,
 } from "../config.js";
 import { truncateAwaitingLlmUpgrade } from "../functions/compress-upgrade-gate.js";
 import { logger } from "../logger.js";
@@ -112,45 +111,42 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     if (isReflectEnabled()) {
       fireVoid("mem::slot-reflect", { sessionId: data.sessionId });
     }
-    if (isGraphExtractionEnabled()) {
-      try {
-        const session = await kv.get<Session>(KV.sessions, data.sessionId);
-        const graphCursor =
-          session?.lastGraphExtractedEventAt &&
-          session?.lastGraphExtractedEventId
-            ? {
-                timestamp: session.lastGraphExtractedEventAt,
-                id: session.lastGraphExtractedEventId,
-              }
-            : undefined;
-        const observations = await kv.list<CompressedObservation>(
-          KV.observations(data.sessionId),
+    try {
+      const session = await kv.get<Session>(KV.sessions, data.sessionId);
+      const graphCursor =
+        session?.lastGraphExtractedEventAt &&
+        session?.lastGraphExtractedEventId
+          ? {
+              timestamp: session.lastGraphExtractedEventAt,
+              id: session.lastGraphExtractedEventId,
+            }
+          : undefined;
+      const observations = await kv.list<CompressedObservation>(
+        KV.observations(data.sessionId),
+      );
+      const titled = sortByEventCursor(
+        observations.filter((o) => o.title),
+      );
+      let eligible = titled;
+      if (isAutoCompressEnabled()) {
+        eligible = truncateAwaitingLlmUpgrade(
+          titled,
+          Date.now(),
+          getCompressUpgradeGraceMs(),
         );
-        const titled = sortByEventCursor(
-          observations.filter((o) => o.title),
-        );
-        let eligible = titled;
-        if (isAutoCompressEnabled()) {
-          eligible = truncateAwaitingLlmUpgrade(
-            titled,
-            Date.now(),
-            getCompressUpgradeGraceMs(),
-          );
-        }
-        const compressed = eligible.filter((o) => isAfterCursor(o, graphCursor));
-        if (compressed.length > 0) {
-          sdk.trigger({
-            function_id: "mem::graph-extract",
-            payload: { observations: compressed, sessionId: data.sessionId },
-            action: TriggerAction.Void(),
-          });
-        }
-      } catch (err) {
-        logger.warn("graph-extract trigger failed", {
+      }
+      const compressed = eligible.filter((o) => isAfterCursor(o, graphCursor));
+      if (compressed.length > 0) {
+        fireVoid("mem::graph-extract", {
+          observations: compressed,
           sessionId: data.sessionId,
-          error: err instanceof Error ? err.message : String(err),
         });
       }
+    } catch (err) {
+      logger.warn("graph-extract trigger failed", {
+        sessionId: data.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     // Crystals + lessons consolidation for non-end callers (evict / stale
     // recovery, and any future flush path). /session/end is a deprecated noop

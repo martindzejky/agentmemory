@@ -38,6 +38,23 @@ export interface CommitLink {
   linkedAt: string;
 }
 
+// Immutable write-time provenance: which trust boundary the content
+// crossed, inherited by derived records.
+export interface Origin {
+  channel: "user" | "agent" | "tool" | "import" | "shared";
+  detail?: string;
+  capturedAt: string;
+}
+
+export function importOrigin(
+  existing: Origin | undefined,
+  capturedAt: string,
+  detail?: string,
+): Origin {
+  if (existing) return existing;
+  return { channel: "import", capturedAt, ...(detail ? { detail } : {}) };
+}
+
 export interface RawObservation {
   id: string;
   sessionId: string;
@@ -59,6 +76,7 @@ export interface RawObservation {
   agentId?: string;
   /** Client event id; present when the observe call supplied one. */
   eventId?: string;
+  origin?: Origin;
 }
 
 /** KV.eventIds entry: eventId key -> first observation produced for that id. */
@@ -87,6 +105,7 @@ export interface CompressedObservation {
   modality?: "text" | "image" | "mixed";
   agentId?: string;
   derivedBy?: "synthetic" | "llm";
+  origin?: Origin;
 }
 
 export type ObservationType =
@@ -128,6 +147,7 @@ export interface Memory {
   imageData?: string;
   agentId?: string;
   project?: string;
+  origin?: Origin;
 }
 
 export interface SessionSummary {

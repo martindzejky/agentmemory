@@ -1,5 +1,10 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { EventIdIndexEntry, RawObservation, HookPayload } from "../types.js";
+import type {
+  EventIdIndexEntry,
+  RawObservation,
+  HookPayload,
+  Origin,
+} from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
@@ -11,6 +16,8 @@ import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
 import { ensureSession, resolveCreateAgentId } from "./ensure-session.js";
 import { writeEventIdIndexEntry } from "./event-id-index.js";
+
+const TOOL_HOOKS = new Set(["pre_tool_use", "post_tool_use", "post_tool_failure"]);
 
 export function extractImage(d: unknown): string | undefined {
   if (!d) return undefined;
@@ -81,6 +88,9 @@ export function registerObserveFunction(
         sanitizedRaw = stripPrivateData(String(payload.data));
       }
 
+      let originChannel: Origin["channel"] = "agent";
+      if (payload.hookType === "prompt_submit") originChannel = "user";
+      else if (TOOL_HOOKS.has(payload.hookType)) originChannel = "tool";
       const raw: RawObservation = {
         id: obsId,
         sessionId: payload.sessionId,
@@ -88,6 +98,10 @@ export function registerObserveFunction(
         hookType: payload.hookType,
         raw: sanitizedRaw,
         ...(eventId ? { eventId } : {}),
+        origin: {
+          channel: originChannel,
+          capturedAt: payload.timestamp,
+        },
       };
 
       let extractedImage: string | undefined;
@@ -101,6 +115,7 @@ export function registerObserveFunction(
           raw.toolName = d["tool_name"] as string | undefined;
           raw.toolInput = d["tool_input"];
           raw.toolOutput = d["tool_output"] || d["error"];
+          if (raw.origin && raw.toolName) raw.origin.detail = raw.toolName;
         }
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
