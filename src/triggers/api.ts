@@ -23,6 +23,7 @@ import {
   detectLlmProviderKind,
   getAgentId,
   isAgentScopeIsolated,
+  loadConfig,
 } from "../config.js";
 import { normalizeRequestAgentId } from "../functions/ensure-session.js";
 
@@ -199,10 +200,23 @@ export function registerApiTriggers(
     },
   );
 
+  // Shared instance metadata for livez and health so the two never
+  // drift. streamsPort lets the viewer resolve its stream WebSocket
+  // target from the server instead of port arithmetic, which broke
+  // whenever the viewer bound a fallback port. Config is boot-static,
+  // so read it once instead of rebuilding the merged env per request.
+  const bootStreamsPort = loadConfig().streamsPort;
+  const instanceInfo = () => ({
+    service: "agentmemory",
+    viewerPort: getBoundViewerPort(),
+    viewerSkipped: getViewerSkipped(),
+    streamsPort: bootStreamsPort,
+  });
+
   sdk.registerFunction("api::liveness",
     async (): Promise<Response> => ({
       status_code: 200,
-      body: { status: "ok", service: "agentmemory", viewerPort: getBoundViewerPort(), viewerSkipped: getViewerSkipped() },
+      body: { status: "ok", ...instanceInfo() },
     }),
   );
   sdk.registerTrigger({
@@ -303,8 +317,7 @@ export function registerApiTriggers(
           health: health || null,
           functionMetrics,
           circuitBreaker,
-          viewerPort: getBoundViewerPort(),
-          viewerSkipped: getViewerSkipped(),
+          ...instanceInfo(),
         },
       };
     },
@@ -1144,6 +1157,7 @@ export function registerApiTriggers(
         ttlDays?: number;
         sourceObservationIds?: string[];
         project?: string;
+        agentId?: string;
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -1171,6 +1185,9 @@ export function registerApiTriggers(
           ...(req.body.ttlDays !== undefined && { ttlDays: req.body.ttlDays }),
           ...(req.body.sourceObservationIds !== undefined && { sourceObservationIds: req.body.sourceObservationIds }),
           ...(req.body.project !== undefined && { project: req.body.project }),
+          ...(typeof req.body.agentId === "string" && req.body.agentId.trim()
+            ? { agentId: req.body.agentId.trim() }
+            : {}),
         },
       });
       return { status_code: 201, body: result };

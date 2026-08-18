@@ -16,6 +16,7 @@ import {
 import {
   getCompressUpgradeGraceMs,
   isAutoCompressEnabled,
+  isGraphExtractionEnabled,
 } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
@@ -457,6 +458,92 @@ function parseGraphXml(
   return { nodes, edges };
 }
 
+const HEURISTIC_EDGE_WEIGHT = 0.4;
+const MAX_HEURISTIC_EDGES_PER_OBS = 12;
+
+export function extractGraphHeuristics(
+  observations: CompressedObservation[],
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const now = new Date().toISOString();
+  const nodes: GraphNode[] = [];
+  const nodeByKey = new Map<string, GraphNode>();
+  const edges: GraphEdge[] = [];
+  const edgeByPair = new Map<string, GraphEdge>();
+
+  const nodeFor = (
+    type: GraphNode["type"],
+    name: string,
+    obsId: string,
+  ): GraphNode | null => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const key = `${type}:${trimmed.toLowerCase()}`;
+    let node = nodeByKey.get(key);
+    if (!node) {
+      node = {
+        id: generateId("gn"),
+        type,
+        name: trimmed,
+        properties: {},
+        sourceObservationIds: [obsId],
+        createdAt: now,
+      };
+      nodeByKey.set(key, node);
+      nodes.push(node);
+    } else if (!node.sourceObservationIds.includes(obsId)) {
+      node.sourceObservationIds.push(obsId);
+    }
+    return node;
+  };
+
+  for (const obs of observations) {
+    let budget = MAX_HEURISTIC_EDGES_PER_OBS;
+    const link = (a: GraphNode | null, b: GraphNode | null): void => {
+      if (!a || !b || a.id === b.id) return;
+      const pair = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+      const existing = edgeByPair.get(pair);
+      if (existing) {
+        if (!existing.sourceObservationIds.includes(obs.id)) {
+          existing.sourceObservationIds.push(obs.id);
+        }
+        return;
+      }
+      if (budget <= 0) return;
+      budget -= 1;
+      const edge: GraphEdge = {
+        id: generateId("ge"),
+        type: "related_to",
+        sourceNodeId: a.id,
+        targetNodeId: b.id,
+        weight: HEURISTIC_EDGE_WEIGHT,
+        sourceObservationIds: [obs.id],
+        createdAt: now,
+      };
+      edgeByPair.set(pair, edge);
+      edges.push(edge);
+    };
+
+    const fileNodes = (obs.files ?? []).map((f) =>
+      nodeFor("file", f, obs.id),
+    );
+    const conceptNodes = (obs.concepts ?? []).map((c) =>
+      nodeFor("concept", c, obs.id),
+    );
+
+    for (const concept of conceptNodes) {
+      for (const file of fileNodes) link(concept, file);
+    }
+    for (let i = 0; i + 1 < conceptNodes.length; i++) {
+      link(conceptNodes[i], conceptNodes[i + 1]);
+    }
+    for (let i = 0; i + 1 < fileNodes.length; i++) {
+      link(fileNodes[i], fileNodes[i + 1]);
+    }
+  }
+
+  return { nodes, edges };
+}
+
 // Shared persistence for a batch of extracted/imported nodes and edges.
 // Factored out of mem::graph-extract so structural importers (graphify)
 // reuse the exact same name-index upsert, degree bookkeeping, and snapshot
@@ -604,7 +691,7 @@ export function registerGraphFunction(
   kv: StateKV,
   provider: MemoryProvider,
 ): void {
-  sdk.registerFunction("mem::graph-extract", 
+  sdk.registerFunction("mem::graph-extract",
     async (data: {
       observations: CompressedObservation[];
       sessionId?: string;
@@ -635,25 +722,54 @@ export function registerGraphFunction(
         return { success: false, error: "No observations provided" };
       }
 
-      const prompt = buildGraphExtractionPrompt(
-        eligible.map((o) => ({
-          title: o.title,
-          narrative: o.narrative,
-          concepts: o.concepts,
-          files: o.files,
-          type: o.type,
-        })),
-      );
+      const obsIds = eligible.map((o) => o.id);
+
+      let nodes: GraphNode[] = [];
+      let edges: GraphEdge[] = [];
+      try {
+        const heuristic = extractGraphHeuristics(eligible);
+        nodes = heuristic.nodes;
+        edges = heuristic.edges;
+      } catch (err) {
+        logger.warn("heuristic graph extraction failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      const llmEnabled =
+        isGraphExtractionEnabled() && !provider.name.includes("noop");
+      let llmError: string | undefined;
+      if (llmEnabled) {
+        const prompt = buildGraphExtractionPrompt(
+          eligible.map((o) => ({
+            title: o.title,
+            narrative: o.narrative,
+            concepts: o.concepts,
+            files: o.files,
+            type: o.type,
+          })),
+        );
+        try {
+          const response = await provider.compress(
+            GRAPH_EXTRACTION_SYSTEM,
+            prompt,
+          );
+          const parsed = parseGraphXml(response, obsIds);
+          nodes = nodes.concat(parsed.nodes);
+          edges = edges.concat(parsed.edges);
+        } catch (err) {
+          llmError = err instanceof Error ? err.message : String(err);
+          logger.error("LLM graph extraction failed", { error: llmError });
+        }
+      }
+
+      if (nodes.length === 0 && edges.length === 0) {
+        return llmError
+          ? { success: false, error: llmError }
+          : { success: true, nodesAdded: 0, edgesAdded: 0 };
+      }
 
       try {
-        const response = await provider.compress(
-          GRAPH_EXTRACTION_SYSTEM,
-          prompt,
-        );
-
-        const obsIds = eligible.map((o) => o.id);
-        const { nodes, edges } = parseGraphXml(response, obsIds);
-
         const { newNodeCount, newEdgeCount } = await persistGraphDelta(
           kv,
           nodes,
@@ -671,6 +787,7 @@ export function registerGraphFunction(
           edges: edges.length,
           newNodes: newNodeCount,
           newEdges: newEdgeCount,
+          llm: llmEnabled && !llmError,
         });
 
         if (sessionId) {

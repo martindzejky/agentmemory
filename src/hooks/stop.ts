@@ -38,7 +38,7 @@ async function main() {
     return;
   }
 
-  const sessionId = ((data.session_id || data.sessionId) as string) || "unknown";
+  const sessionId = ((data.session_id || data.sessionId || data.conversation_id) as string) || "unknown";
 
   fetch(`${REST_URL}/agentmemory/summarize`, {
     method: "POST",

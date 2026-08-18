@@ -75,6 +75,9 @@ const mockProvider = {
   summarize: vi.fn(),
 };
 
+// Structured fields stay empty so the deterministic heuristic pass
+// contributes nothing and these tests keep exercising the LLM XML
+// parse + persist path in isolation.
 const testObs: CompressedObservation = {
   id: "obs_1",
   sessionId: "ses_1",
@@ -83,20 +86,27 @@ const testObs: CompressedObservation = {
   title: "Edit index file",
   facts: ["Modified main function"],
   narrative: "Updated index.ts with main function",
-  concepts: ["typescript", "entry-point"],
-  files: ["src/index.ts"],
+  concepts: [],
+  files: [],
   importance: 7,
 };
 
 describe("Graph Functions", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
+  const ORIG_GRAPH_FLAG = process.env["GRAPH_EXTRACTION_ENABLED"];
 
   beforeEach(() => {
     sdk = mockSdk();
     kv = mockKV();
     vi.clearAllMocks();
+    process.env["GRAPH_EXTRACTION_ENABLED"] = "true";
     registerGraphFunction(sdk as never, kv as never, mockProvider as never);
+  });
+
+  afterEach(() => {
+    if (ORIG_GRAPH_FLAG === undefined) delete process.env["GRAPH_EXTRACTION_ENABLED"];
+    else process.env["GRAPH_EXTRACTION_ENABLED"] = ORIG_GRAPH_FLAG;
   });
 
   it("graph-extract creates nodes and edges from XML response", async () => {
