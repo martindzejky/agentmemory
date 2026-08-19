@@ -139,3 +139,7 @@ See <https://railway.com/pricing> for the current rate card.
   than an npm-install-only image; cached layers make subsequent
   rebuilds quicker. Pin `III_VERSION` / `III_SDK_VERSION` build args
   in the service's *Variables* tab to lock the iii engine/SDK.
+- The image uses `node:24-slim` and installs npm 12 in both stages.
+  `node:22-slim` ships npm 10.9.x, which fails this repo's
+  `npm install` with `Cannot read properties of null (reading
+  'edgesOut')`.
