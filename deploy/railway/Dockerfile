@@ -5,7 +5,12 @@ FROM iiidev/iii:${III_VERSION} AS iii-image
 # Build @agentmemory/agentmemory from this repository and pack it so the
 # runtime stage can install a local tarball instead of the npm registry.
 # Build context must be the repository root (Railway Root Directory = /).
-FROM node:22-slim AS build
+# node:22-slim ships npm 10.9.x, which crashes this install with
+# "Cannot read properties of null (reading 'edgesOut')". Pin Node 24 +
+# npm 12 to match the local toolchain that already builds this repo.
+FROM node:24-slim AS build
+
+RUN npm install -g npm@12
 
 WORKDIR /workspace
 COPY . .
@@ -14,10 +19,12 @@ RUN npm install --no-fund --no-audit \
  && npm pack --pack-destination /tmp \
  && mv /tmp/agentmemory-agentmemory-*.tgz /tmp/agentmemory.tgz
 
-FROM node:22-slim
+FROM node:24-slim
 
 ARG III_VERSION=0.11.2
 ARG III_SDK_VERSION=0.11.2
+
+RUN npm install -g npm@12
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates tini gosu curl \
