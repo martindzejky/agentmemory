@@ -129,6 +129,18 @@ railway redeploy --service agentmemory
 
 See <https://railway.com/pricing> for the current rate card.
 
+## Crash restart and alerts
+
+The container process exits if `iii-engine` dies after boot, or if the
+worker stays disconnected from the engine for 60s
+(`AGENTMEMORY_ENGINE_WATCHDOG_MS`, `0` disables). Railway's
+`restartPolicyType: ON_FAILURE` then restarts the service.
+
+Railway healthchecks run only at deploy time — they will not notice a
+later engine death on their own. Add a project webhook
+(Settings → Webhooks) to Slack, Discord, or your own URL so a
+`Crashed` deployment pages you.
+
 ## Known caveats
 
 - Railway volumes do not auto-snapshot. Take your own backups (above)

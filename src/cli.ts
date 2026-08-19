@@ -57,6 +57,11 @@ import {
 import { renderSplash } from "./cli/splash.js";
 import { isFirstRun, readPrefs, resetPrefs, writePrefs } from "./cli/preferences.js";
 import { runOnboarding } from "./cli/onboarding.js";
+import {
+  exitCodeForSpawnedEngineDeath,
+  markEngineShutdown,
+  markEngineSupervised,
+} from "./cli/engine-supervise.js";
 import { setBootVerbose } from "./logger.js";
 import { hydrateProcessEnvFromFile } from "./config.js";
 import { VERSION } from "./version.js";
@@ -966,6 +971,14 @@ function spawnEngineBackground(
       if (!isDocker) clearEnginePidfile();
       clearEngineState();
     }
+    const supervisedExit = exitCodeForSpawnedEngineDeath(code, signal);
+    if (supervisedExit !== null) {
+      const reason = signal ? `signal ${signal}` : `code ${code}`;
+      console.error(
+        `[agentmemory] iii-engine exited (${reason}); exiting so the supervisor can restart`,
+      );
+      process.exit(supervisedExit);
+    }
   });
   child.unref();
   return child;
@@ -1452,6 +1465,7 @@ async function main() {
   }
 
   s.stop(c.ok("iii-engine is ready"));
+  markEngineSupervised();
   await import("./index.js");
   if (await waitForAgentmemoryReady(15000)) {
     const consoleState = await ensureIiiConsole();
@@ -2287,6 +2301,7 @@ async function startServerForDemo(): Promise<() => Promise<void>> {
       p.log.error("iii-engine did not become ready within 15s.");
       process.exit(1);
     }
+    markEngineSupervised();
   }
 
   await import("./index.js");
@@ -2297,6 +2312,7 @@ async function startServerForDemo(): Promise<() => Promise<void>> {
 
   return async () => {
     if (!startedEngine) return;
+    markEngineShutdown();
     const port = getRestPort();
     const state = readEngineState();
     if (state?.kind === "docker") {

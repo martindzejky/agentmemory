@@ -101,6 +101,10 @@ import { getAllTools } from "./mcp/tools-registry.js";
 import { startViewerServer } from "./viewer/server.js";
 import { MetricsStore } from "./eval/metrics-store.js";
 import { registerHealthMonitor } from "./health/monitor.js";
+import {
+  createEngineWatchdog,
+  engineWatchdogTimeoutMs,
+} from "./health/engine-watchdog.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
 import { bootLog } from "./logger.js";
@@ -400,6 +404,16 @@ async function main() {
   registerMcpEndpoints(sdk, kv, secret);
 
   const healthMonitor = registerHealthMonitor(sdk, kv);
+  const engineWatchdogTimeout = engineWatchdogTimeoutMs();
+  const engineWatchdog =
+    engineWatchdogTimeout > 0
+      ? createEngineWatchdog({ timeoutMs: engineWatchdogTimeout })
+      : null;
+  if (engineWatchdog && typeof sdk.on === "function") {
+    sdk.on("connection_state", (state?: unknown) => {
+      engineWatchdog.onConnectionState(state);
+    });
+  }
 
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
   // Wire the persistence hook so delete paths can flush BM25/vector
@@ -632,6 +646,7 @@ async function main() {
 
   const shutdown = async () => {
     console.log(`\n[agentmemory] Shutting down...`);
+    engineWatchdog?.markShuttingDown();
     healthMonitor.stop();
     indexPersistence.stop();
     await new Promise<void>((resolve) => viewerServer.close(() => resolve()));
