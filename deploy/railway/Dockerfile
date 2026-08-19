@@ -24,10 +24,11 @@ FROM node:24-slim
 ARG III_VERSION=0.11.2
 ARG III_SDK_VERSION=0.11.2
 
+RUN npm install -g npm@12
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates tini gosu curl \
- && rm -rf /var/lib/apt/lists/* \
- && npm install -g npm@12
+ && rm -rf /var/lib/apt/lists/*
 
 COPY --from=iii-image /app/iii /usr/local/bin/iii
 
