@@ -211,7 +211,6 @@ export interface AgentMemoryConfig {
   engineUrl: string;
   restPort: number;
   streamsPort: number;
-  viewerPort: number;
   provider: ProviderConfig;
   tokenBudget: number;
   maxObservationsPerSession: number;
