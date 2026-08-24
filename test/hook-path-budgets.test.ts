@@ -264,18 +264,25 @@ describe("background embed queue", () => {
   });
 
   it("returns immediately and indexes afterwards", async () => {
-    const started = Date.now();
+    const index = new VectorIndex();
+    setVectorIndex(index);
+
     enqueueVectorIndexAdd({
       id: "obs_1",
       sessionId: "ses_1",
       text: "railway deploy timeout",
       kind: "synthetic",
     });
-    // Enqueueing must not wait on the provider round-trip.
-    expect(Date.now() - started).toBeLessThan(10);
+
+    // Enqueueing hands back control without waiting on the provider, so the
+    // index cannot be populated yet. Asserting on state rather than elapsed
+    // time keeps this deterministic on a loaded CI runner.
+    expect(index.size).toBe(0);
+    expect(getEmbedQueueStats().processed).toBe(0);
 
     await flushEmbedQueue(5000);
     expect(getEmbedQueueStats().processed).toBe(1);
+    expect(index.size).toBe(1);
   });
 
   it("never runs more than two embeddings at once", async () => {
