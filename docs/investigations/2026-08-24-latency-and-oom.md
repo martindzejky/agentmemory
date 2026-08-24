@@ -379,10 +379,13 @@ Implemented in this branch:
 2. **Make graph results usable** by resolving the missing `sessionId` from the
    BM25 index's in-memory `obsId → sessionId` map, so re-enabling the stream is
    meaningful rather than decorative.
-3. **Deadlines instead of unbounded work.** A `Deadline` primitive plus KV
-   operation timeouts, threaded through enrich/search, so a request that has
-   already blown its client's budget stops instead of running to completion.
-   Counters expose how often that happens.
+3. **Deadlines instead of unbounded work.** A `Deadline` primitive plus KV read
+   timeouts, threaded through enrich/search, so a request that has already blown
+   its client's budget stops instead of running to completion. Counters expose
+   how often that happens. Writes stay unbounded on purpose: a timeout is not a
+   cancellation, so a guarded write can reject while the engine still commits,
+   and `mem::observe`'s compensating rollback would race that late commit and
+   leave the orphaned row the rollback exists to prevent.
 4. **`/observe` off the critical path**: the embedding moves to a bounded
    background queue, so the write is durable but the response is not blocked on
    a network round-trip inside the session lock.

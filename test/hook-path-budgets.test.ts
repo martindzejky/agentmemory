@@ -29,7 +29,11 @@ import {
 } from "../src/functions/search.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import { registerFileIndexFunction } from "../src/functions/file-index.js";
-import { invalidateFileContextCache } from "../src/state/file-context-cache.js";
+import {
+  getFileCandidatesCached,
+  getFileContextCacheStats,
+  invalidateFileContextCache,
+} from "../src/state/file-context-cache.js";
 import { KV } from "../src/state/schema.js";
 import type {
   CompressedObservation,
@@ -236,6 +240,52 @@ describe("file-context enumeration reuse", () => {
     });
     expect(kv.listCalls).toContain(KV.observations("ses_old"));
     expect(kv.listCalls.length).toBeGreaterThan(afterFirst);
+  });
+});
+
+describe("file-context cache stays inside its budget", () => {
+  // Refreshing an expired entry used to decrement its size while leaving it in
+  // the map, which made it the oldest key and stopped eviction on itself, so the
+  // global budget could be exceeded without freeing a peer.
+  beforeEach(() => invalidateFileContextCache());
+  afterEach(() => invalidateFileContextCache());
+
+  function candidates(sessionId: string, count: number): CompressedObservation[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `${sessionId}-obs-${i}`,
+      sessionId,
+      timestamp: new Date().toISOString(),
+      type: "file_edit",
+      title: "t",
+      facts: [],
+      narrative: "n",
+      concepts: [],
+      files: ["src/handler.ts"],
+      importance: 7,
+    })) as CompressedObservation[];
+  }
+
+  it("evicts peers when an expired entry is refreshed and has grown", async () => {
+    vi.useFakeTimers();
+    try {
+      // 4500 of a 5000 budget, with the oldest entry the smallest.
+      await getFileCandidatesCached("s1", async () => candidates("s1", 500));
+      await getFileCandidatesCached("s2", async () => candidates("s2", 2000));
+      await getFileCandidatesCached("s3", async () => candidates("s3", 2000));
+      expect(getFileContextCacheStats().candidates).toBe(4500);
+
+      // s1 expires and comes back larger, as a session that kept accumulating
+      // observations would. Refreshing it has to evict a peer to fit.
+      await vi.advanceTimersByTimeAsync(61_000);
+      await getFileCandidatesCached("s1", async () => candidates("s1", 3000));
+
+      const stats = getFileContextCacheStats();
+      expect(stats.candidates).toBeLessThanOrEqual(5000);
+      // A peer was evicted rather than the refresh stopping on its own entry.
+      expect(stats.sessions).toBeLessThan(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

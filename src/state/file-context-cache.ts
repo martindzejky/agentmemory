@@ -77,10 +77,20 @@ export async function getFileCandidatesCached(
 
   const candidates = project(await load());
 
+  // Drop the entry being refreshed before evicting anyone else. Decrementing
+  // its size while leaving it in the map made it the oldest key on the next
+  // line, so eviction stopped on its own stale entry and the budget could be
+  // exceeded without ever freeing a peer.
+  if (hit) {
+    cachedCandidateCount -= hit.candidates.length;
+    candidatesBySession.delete(sessionId);
+  }
+
   // Evict oldest entries until the new one fits. Sessions are visited
   // most-recent-first, so the oldest cached entry is also the least likely to be
-  // asked for again.
-  if (hit) cachedCandidateCount -= hit.candidates.length;
+  // asked for again. A single session cannot exceed the budget on its own
+  // (MAX_CACHED_CANDIDATES is well above MAX_OBS_PER_SESSION), so this
+  // terminates with room to spare rather than emptying the map.
   while (
     cachedCandidateCount + candidates.length > MAX_CACHED_CANDIDATES &&
     candidatesBySession.size > 0
@@ -88,7 +98,6 @@ export async function getFileCandidatesCached(
     const oldestKey = [...candidatesBySession.entries()].reduce((a, b) =>
       a[1].at <= b[1].at ? a : b,
     )[0];
-    if (oldestKey === sessionId) break;
     cachedCandidateCount -= candidatesBySession.get(oldestKey)!.candidates.length;
     candidatesBySession.delete(oldestKey);
   }

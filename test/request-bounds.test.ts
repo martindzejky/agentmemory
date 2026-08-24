@@ -22,6 +22,7 @@ import {
   setSlowOperationThresholdMs,
 } from "../src/utils/op-timing.js";
 import { evaluateHealth } from "../src/health/thresholds.js";
+import { StateKV } from "../src/state/kv.js";
 import type { HealthSnapshot } from "../src/types.js";
 
 function deferred<T>() {
@@ -139,6 +140,52 @@ describe("withTimeout", () => {
     expect(
       getDeadlineExceededCounts()["kv.list(mem:graph:nodes)"],
     ).toBe(1);
+  });
+});
+
+describe("state RPC timeouts apply to reads only", () => {
+  // A timeout is not a cancellation: nothing tells the engine to abandon an
+  // in-flight invocation, so a write that times out client-side can still
+  // commit. Callers compensate on rejection (mem::observe rolls back the raw row
+  // when the derived write fails), and that delete would race the late commit.
+  // Reads are free to abandon; writes are not.
+  function slowSdk() {
+    const calls: string[] = [];
+    return {
+      calls,
+      trigger: async ({ function_id }: { function_id: string }) => {
+        calls.push(function_id);
+        await new Promise((r) => setTimeout(r, 50));
+        return null;
+      },
+    };
+  }
+
+  beforeEach(() => {
+    resetDeadlineCounters();
+    process.env["AGENTMEMORY_KV_TIMEOUT_MS"] = "10";
+  });
+
+  afterEach(() => {
+    delete process.env["AGENTMEMORY_KV_TIMEOUT_MS"];
+  });
+
+  it("rejects a read that outruns the ceiling", async () => {
+    const kv = new StateKV(slowSdk() as never);
+    await expect(kv.list("mem:graph:nodes")).rejects.toThrow(/exceeded 10ms/);
+    await expect(kv.get("mem:sessions", "s1")).rejects.toThrow(/exceeded 10ms/);
+  });
+
+  it("lets writes run to completion past the read ceiling", async () => {
+    const sdk = slowSdk();
+    const kv = new StateKV(sdk as never);
+
+    await expect(kv.set("mem:obs:s1", "o1", { a: 1 })).resolves.toBeNull();
+    await expect(kv.update("mem:sessions", "s1", [])).resolves.toBeNull();
+    await expect(kv.delete("mem:obs:s1", "o1")).resolves.toBeNull();
+
+    expect(sdk.calls).toEqual(["state::set", "state::update", "state::delete"]);
+    expect(getDeadlineExceededCounts()).toEqual({});
   });
 });
 

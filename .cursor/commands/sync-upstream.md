@@ -26,7 +26,7 @@ Check each of these survived before opening the PR. They are the ones where upst
 | Graph watermark advances on an empty batch | `src/functions/graph.ts` | The zero-result branch calls `stampWatermark()`. This is the one upstream already broke once. |
 | Deadlines on the hook path | `src/functions/enrich.ts`, `src/functions/file-index.ts` | `getEnrichBudgetMs()` still bounds the enrich branches and the file-context session scan. |
 | Embedding off the observe critical path | `src/functions/observe.ts` | Uses `enqueueVectorIndexAdd`, not an awaited `vectorIndexAddGuarded`. Upstream awaits it inside the session lock. |
-| Timeouts on every state RPC | `src/state/kv.ts` | Each method still goes through `this.guard(...)`. |
+| Timeouts on state reads | `src/state/kv.ts` | `get` and `list` still go through `this.guard(...)`, and `set` / `update` / `delete` still do not. Guarding writes looks like an oversight and is not: a timeout is not a cancellation, so a guarded write can reject while the engine still commits, and `mem::observe`'s rollback would then race the late commit. |
 | Container-aware health | `src/health/monitor.ts`, `src/health/thresholds.ts` | `readContainerMemory()` is still read and thresholded. Upstream only measures the Node heap. |
 | Cursor-shaped ingest (Passes A–J) | see `README.md` "Current fork progress" | Each pass in that list still holds. Upstream assumes Claude Code session boundaries. |
 
