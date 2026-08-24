@@ -293,9 +293,8 @@ async function main() {
     // Loud, because it is the difference between millisecond and multi-second
     // searches on a large graph, and the cost is not obvious from the flag name.
     bootWarn(
-      "AGENTMEMORY_GRAPH_SEARCH=true: every search enumerates the full graph " +
-        "(all nodes + all edges, twice per query). Expect multi-second searches " +
-        "and high memory on a large graph.",
+      "AGENTMEMORY_GRAPH_SEARCH=true: hybrid search uses the graph token and " +
+        "adjacency indexes. Still opt-in; default stays off.",
     );
   }
 

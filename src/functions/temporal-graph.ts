@@ -18,6 +18,7 @@ import {
   upsertSnapshotNode,
   writeGraphSnapshot,
 } from "../state/graph-snapshot.js";
+import { indexGraphDelta } from "../state/graph-search-index.js";
 
 const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal knowledge extraction engine. Given observations, extract entities AND their temporal relationships with full context metadata.
 
@@ -202,6 +203,8 @@ export function registerTemporalGraphFunctions(
         const snap = snapshot ?? emptyGraphSnapshot();
 
         const idRemap = new Map<string, string>();
+        const indexedNodes: GraphNode[] = [];
+        const indexedEdges: GraphEdge[] = [];
         for (const node of nodes) {
           const existing = existingNodes.find(
             (n) =>
@@ -229,12 +232,14 @@ export function registerTemporalGraphFunctions(
             if (merged.aliases.length === 0) delete (merged as any).aliases;
             await kv.set(KV.graphNodes, existing.id, merged);
             upsertSnapshotNode(snap, merged);
+            indexedNodes.push(merged);
             node.id = existing.id;
             idRemap.set(oldId, existing.id);
           } else {
             await kv.set(KV.graphNodes, node.id, node);
             existingNodes.push(node);
             upsertSnapshotNode(snap, node);
+            indexedNodes.push(node);
           }
         }
 
@@ -264,6 +269,7 @@ export function registerTemporalGraphFunctions(
 
             await kv.set(KV.graphEdgeHistory, existingEdge.id, updatedOld);
             removeSnapshotEdge(snap, existingEdge.id);
+            indexedEdges.push({ ...updatedOld, stale: true });
 
             edge.version = (existingEdge.version || 1) + 1;
           }
@@ -271,9 +277,18 @@ export function registerTemporalGraphFunctions(
           await kv.set(KV.graphEdges, edge.id, edge);
           existingEdges.push(edge);
           upsertSnapshotEdge(snap, edge);
+          indexedEdges.push(edge);
         }
 
         await writeGraphSnapshot(kv, snap);
+        if (indexedNodes.length > 0 || indexedEdges.length > 0) {
+          await indexGraphDelta(
+            kv,
+            indexedNodes,
+            indexedEdges,
+            snap.resetAt ?? "",
+          );
+        }
 
         logger.info("Temporal graph extraction complete", {
           nodes: nodes.length,

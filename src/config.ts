@@ -381,17 +381,11 @@ export function getGraphBatchSize(): number {
   return safeParseInt(getMergedEnv()["GRAPH_EXTRACTION_BATCH_SIZE"], 10);
 }
 
-// Graph stream inside hybrid search. OFF by default in this fork because the
-// implementation is both unusable and ruinous: GraphRetrieval enumerates all of
-// KV.graphNodes + KV.graphEdges per call (twice per query), which at 32K nodes /
-// 61K edges measured 60.8 MB of JSON, ~2.1s of KV time, and +573 MB of
-// iii-engine RSS that is never released — and every result it returns is then
-// discarded downstream because it carries no sessionId (upstream #937). See
-// docs/investigations/2026-08-24-latency-and-oom.md.
-//
-// Enabling it is a deliberate opt-in that trades bounded latency for graph
-// recall. The bounded seed cap and traversal budget below limit the damage but
-// cannot avoid the enumeration; that needs an adjacency index on the write path.
+// Graph stream inside hybrid search. OFF by default. When on, GraphRetrieval
+// looks up names and neighbors through write-path token / adjacency /
+// observation indexes (keys namespaced by graph resetAt). It does not kv.list
+// KV.graphNodes or KV.graphEdges. Seed cap and traversal budget still apply.
+// See docs/investigations/2026-08-24-latency-and-oom.md.
 export function isGraphSearchEnabled(): boolean {
   return getMergedEnv()["AGENTMEMORY_GRAPH_SEARCH"] === "true";
 }

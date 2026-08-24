@@ -31,6 +31,10 @@ import {
   readGraphSnapshot,
   snapshotCapWarning,
 } from "../state/graph-snapshot.js";
+import {
+  indexGraphDelta,
+  stampSearchIndexMeta,
+} from "../state/graph-search-index.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -566,6 +570,8 @@ export async function persistGraphDelta(
   // endpoints to the persisted ids so edges never dangle and re-runs hit the
   // same edge-index key instead of duplicating.
   const idRemap = new Map<string, string>();
+  const indexedNodes: GraphNode[] = [];
+  const indexedEdges: GraphEdge[] = [];
 
   for (const node of nodes) {
     const indexKey = nameIndexKey(node.type, node.name);
@@ -600,6 +606,7 @@ export async function persistGraphDelta(
         snap.topNodes[topIdx] = merged;
         snapMutated = true;
       }
+      indexedNodes.push(merged);
     } else {
       await kv.set(KV.graphNodes, node.id, node);
       await kv.set(KV.graphNameIndex, indexKey, node.id);
@@ -616,6 +623,7 @@ export async function persistGraphDelta(
         snap.topNodes.push(node);
         snap.topDegrees[node.id] = 0;
       }
+      indexedNodes.push(node);
     }
   }
 
@@ -651,6 +659,7 @@ export async function persistGraphDelta(
         snap.topEdges[topIdx] = merged;
         snapMutated = true;
       }
+      indexedEdges.push(merged);
     } else {
       await kv.set(KV.graphEdges, edge.id, edge);
       await kv.set(KV.graphEdgeKey, eKey, edge.id);
@@ -663,6 +672,7 @@ export async function persistGraphDelta(
       await applyDegreeDelta(kv, snap, edge.sourceNodeId, +1);
       await applyDegreeDelta(kv, snap, edge.targetNodeId, +1);
       newEdgesForTopCheck.push(edge);
+      indexedEdges.push(edge);
     }
   }
 
@@ -677,6 +687,15 @@ export async function persistGraphDelta(
     snap.updatedAt = capturedAt;
     snap.dirty = false;
     await kv.set(KV.graphSnapshot, SNAPSHOT_KEY, snap);
+  }
+
+  if (indexedNodes.length > 0 || indexedEdges.length > 0) {
+    await indexGraphDelta(
+      kv,
+      indexedNodes,
+      indexedEdges,
+      snap.resetAt ?? "",
+    );
   }
 
   return { newNodeCount, newEdgeCount };
@@ -1199,6 +1218,7 @@ export function registerGraphFunction(
       resetAt: new Date().toISOString(),
     };
     await kv.set(KV.graphSnapshot, SNAPSHOT_KEY, resetSnapshot);
+    await stampSearchIndexMeta(kv, resetSnapshot.resetAt ?? "", 0, 0);
     const counts: Record<string, number> = {
       [KV.graphSnapshot]: 1,
     };

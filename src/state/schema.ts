@@ -42,6 +42,17 @@ export const KV = {
   graphNameIndex: "mem:graph:name-index",
   graphEdgeKey: "mem:graph:edge-key",
   graphNodeDegree: "mem:graph:node-degree",
+  // Write-path indexes for AGENTMEMORY_GRAPH_SEARCH. Keys are namespaced
+  // `${resetAt}|…` so a post-reset lookup never reads pre-reset junk.
+  // Search uses kv.get only — never kv.list of graphNodes / graphEdges.
+  // - graphSearchTokens: token -> node ids (name lookup)
+  // - graphSearchNodes: nodeId -> tokens, obs ids, neighbors
+  // - graphSearchObs: observationId -> node ids (expandFromChunks)
+  // - graphSearchMeta: one "current" row recording which resetAt is indexed
+  graphSearchTokens: "mem:graph:search-tokens",
+  graphSearchNodes: "mem:graph:search-nodes",
+  graphSearchObs: "mem:graph:search-obs",
+  graphSearchMeta: "mem:graph:search-meta",
   semantic: "mem:semantic",
   procedural: "mem:procedural",
   teamShared: (teamId: string) => `mem:team:${teamId}:shared`,

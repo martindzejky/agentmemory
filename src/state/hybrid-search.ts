@@ -102,10 +102,8 @@ export class HybridSearch {
       }
     }
 
-    // The graph stream is opt-in. Both entry points below enumerate all of
-    // KV.graphNodes and KV.graphEdges, which is unpaginated: 60.8 MB of JSON and
-    // ~2.1s per query at 32K nodes / 61K edges, plus engine RSS that is never
-    // released. See docs/investigations/2026-08-24-latency-and-oom.md.
+    // The graph stream is opt-in. Lookups go through write-path token and
+    // adjacency indexes; they do not list KV.graphNodes / KV.graphEdges.
     let graphResults: GraphRetrievalResult[] = [];
     if (isGraphSearchEnabled()) {
       const entities =
