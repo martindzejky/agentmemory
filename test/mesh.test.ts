@@ -643,6 +643,42 @@ describe("Mesh Functions", () => {
       expect(snap?.topNodes.some((n) => n.id === "gn_1")).toBe(true);
     });
 
+    it("does not resurrect pre-reset graph rows into the snapshot", async () => {
+      const orphan: GraphNode = {
+        id: "gn_orphan",
+        type: "concept",
+        name: "old",
+        properties: {},
+        sourceObservationIds: ["obs_old"],
+        createdAt: "2026-08-01T00:00:00Z",
+      };
+      await kv.set(KV.graphNodes, orphan.id, orphan);
+      await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, {
+        version: 1,
+        topNodes: [],
+        topEdges: [],
+        topDegrees: {},
+        stats: {
+          totalNodes: 0,
+          totalEdges: 0,
+          nodesByType: {},
+          edgesByType: {},
+        },
+        updatedAt: "2026-08-24T00:00:00Z",
+        dirty: false,
+        resetAt: "2026-08-24T00:00:00Z",
+      });
+
+      const result = (await sdk.trigger("mem::mesh-receive", {
+        graphNodes: [orphan],
+      })) as { success: boolean; accepted: number };
+
+      expect(result.success).toBe(true);
+      const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+      expect(snap?.topNodes.some((n) => n.id === orphan.id)).toBe(false);
+      expect(snap?.stats.totalNodes).toBe(0);
+    });
+
     it("accepts graph edges", async () => {
       const edge: GraphEdge = {
         id: "ge_1",

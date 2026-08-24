@@ -17,6 +17,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import {
   emptyGraphSnapshot,
+  isResetOrphan,
   loadSnapshotGraph,
   upsertSnapshotEdge,
   upsertSnapshotNode,
@@ -128,12 +129,14 @@ async function persistGraphPayloadToSnapshot(
   for (const node of incomingNodes) {
     if (!node.id) continue;
     const stored = await kv.get<GraphNode>(KV.graphNodes, node.id);
-    if (stored) upsertSnapshotNode(snap, stored);
+    if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
+    upsertSnapshotNode(snap, stored);
   }
   for (const edge of incomingEdges) {
     if (!edge.id) continue;
     const stored = await kv.get<GraphEdge>(KV.graphEdges, edge.id);
-    if (stored) upsertSnapshotEdge(snap, stored);
+    if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
+    upsertSnapshotEdge(snap, stored);
   }
   await writeGraphSnapshot(kv, snap);
 }

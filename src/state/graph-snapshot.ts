@@ -91,6 +91,17 @@ export async function writeGraphSnapshot(
   await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, snap);
 }
 
+export function isResetOrphan(
+  snap: GraphSnapshot | null,
+  createdAt: string | undefined,
+): boolean {
+  return !!(
+    snap?.resetAt &&
+    typeof createdAt === "string" &&
+    createdAt < snap.resetAt
+  );
+}
+
 export function upsertSnapshotNode(
   snap: GraphSnapshot,
   node: GraphNode,
@@ -101,12 +112,12 @@ export function upsertSnapshotNode(
     return;
   }
   if (node.stale) return;
+  snap.stats.totalNodes += 1;
+  snap.stats.nodesByType[node.type] =
+    (snap.stats.nodesByType[node.type] ?? 0) + 1;
   if (snap.topNodes.length < SNAPSHOT_TOP_CAP) {
     snap.topNodes.push(node);
     snap.topDegrees[node.id] = snap.topDegrees[node.id] ?? 0;
-    snap.stats.totalNodes += 1;
-    snap.stats.nodesByType[node.type] =
-      (snap.stats.nodesByType[node.type] ?? 0) + 1;
   }
 }
 
@@ -120,12 +131,12 @@ export function upsertSnapshotEdge(
     return;
   }
   if (edge.stale) return;
+  snap.stats.totalEdges += 1;
+  snap.stats.edgesByType[edge.type] =
+    (snap.stats.edgesByType[edge.type] ?? 0) + 1;
   const topIds = new Set(snap.topNodes.map((n) => n.id));
   if (topIds.has(edge.sourceNodeId) && topIds.has(edge.targetNodeId)) {
     snap.topEdges.push(edge);
-    snap.stats.totalEdges += 1;
-    snap.stats.edgesByType[edge.type] =
-      (snap.stats.edgesByType[edge.type] ?? 0) + 1;
   }
 }
 
@@ -144,15 +155,9 @@ export function removeSnapshotNode(
       snap.stats.nodesByType[removed.type] - 1,
     );
   }
-  const kept: GraphEdge[] = [];
-  for (const edge of snap.topEdges) {
-    if (edge.sourceNodeId === nodeId || edge.targetNodeId === nodeId) {
-      snap.stats.totalEdges = Math.max(0, snap.stats.totalEdges - 1);
-      continue;
-    }
-    kept.push(edge);
-  }
-  snap.topEdges = kept;
+  snap.topEdges = snap.topEdges.filter(
+    (e) => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId,
+  );
 }
 
 export function removeSnapshotEdge(
