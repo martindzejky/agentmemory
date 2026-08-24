@@ -23,7 +23,7 @@ Ranked root causes:
 
 | # | Root cause | Confidence | Evidence |
 |---|-----------|-----------|----------|
-| 1 | Unbounded `kv.list` of `mem:graph:nodes` + `mem:graph:edges` on every search (2–4 full scans per query) | **Confirmed** | E1, E2, E3, E6 |
+| 1 | Unbounded `kv.list` of `mem:graph:nodes` + `mem:graph:edges` on every search (2–4 full scans per query) | **Confirmed** | E1, E2, E3, E6, E10 |
 | 2 | Graph stream results are 100% discarded (`sessionId: ""` never hydrates), so cause 1 is pure waste | **Confirmed** | E7 |
 | 3 | `searchByEntities` rebuilds the full adjacency map per seed node — O(seeds x edges) | **Confirmed** | E7 (62 s for one call) |
 | 4 | No cancellation anywhere: aborted client requests run to completion | **Confirmed** | E8 |
@@ -298,7 +298,32 @@ concurrency and memory climb → more requests cross the timeout.
   observations are re-extracted on every stop. That is what grew the graph to
   32K/61K in the first place.
 
-### E10 — cleared hypotheses
+### E10 — production, with and without enrich traffic
+
+`/agentmemory/health` polled every 30s for 70 minutes across the investigation
+(139 samples, 1 restart). Peak, during the subagent burst described in E6:
+
+```
+worker rss 1469 MB, heapUsed 668 MB, cpu 98%, status critical
+alerts ['cpu_critical_98%', 'memory_warn_88%_rss1401mb']
+```
+
+After `fetchEnrichContext` was short-circuited in this VM's hook copy, so this
+agent stopped issuing `/enrich`, the same deployment went flat:
+
+```
+up=750s rss=259.1MB heap=48.3MB healthy []
+up=780s rss=259.1MB heap=47.9MB healthy []
+...
+up=900s rss=259.1MB heap=48.0MB healthy []
+```
+
+Fifteen minutes, no growth at all, on the unmodified production build. The
+variable is enrich traffic, not time or the corpus. Note also what the alert
+said at 1401 MB: `memory_warn_88%`, where 88% is `heapUsed / heapTotal`. Nothing
+was watching the container.
+
+### E11 — cleared hypotheses
 
 - **MCP gateway**: single attempt, no retry, correct 10 s abort
   (`gateway/src/agentmemory.ts:10,167`), one upstream request per tool call. It
