@@ -29,6 +29,7 @@ import {
 import { normalizeRequestAgentId } from "../functions/ensure-session.js";
 import { getOperationStats } from "../utils/op-timing.js";
 import { getKvListStats } from "../state/kv-metrics.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 
 type Response = {
   status_code: number;
@@ -2959,8 +2960,7 @@ export function registerApiTriggers(
         const semantic = await kv.list<import("../types.js").SemanticMemory>(KV.semantic);
         const procedural = await kv.list<import("../types.js").ProceduralMemory>(KV.procedural);
         const relations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
-        const graphNodes = await kv.list<import("../types.js").GraphNode>(KV.graphNodes);
-        const graphEdges = await kv.list<import("../types.js").GraphEdge>(KV.graphEdges);
+        const { nodes: graphNodes, edges: graphEdges } = await loadSnapshotGraph(kv);
         body.semantic = df(semantic, "updatedAt");
         body.procedural = df(procedural, "updatedAt");
         body.relations = df(relations, "createdAt");

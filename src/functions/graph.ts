@@ -24,6 +24,12 @@ import { newestEventCursor, sortByEventCursor } from "./event-cursor.js";
 import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { withBackgroundLlmGate } from "../utils/semaphore.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+  emptyGraphSnapshot,
+  loadSnapshotGraph,
+  readGraphSnapshot,
+} from "../state/graph-snapshot.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -40,7 +46,7 @@ const MAX_GRAPH_QUERY_LIMIT = 5000;
 // enumeration. Aggregate stats (nodesByType / edgesByType) are computed
 // fresh during rebuild and stored alongside.
 const SNAPSHOT_TOP_NODES = DEFAULT_GRAPH_QUERY_LIMIT;
-const SNAPSHOT_KEY = "current";
+const SNAPSHOT_KEY = GRAPH_SNAPSHOT_KEY;
 
 // `state::list` over a 75K-node scope can exceed the iii invocation
 // timeout. The query handler races the enumeration against this budget
@@ -68,37 +74,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-function emptySnapshot(): GraphSnapshot {
-  return {
-    version: 1,
-    topNodes: [],
-    topEdges: [],
-    topDegrees: {},
-    stats: {
-      totalNodes: 0,
-      totalEdges: 0,
-      nodesByType: {},
-      edgesByType: {},
-    },
-    updatedAt: new Date(0).toISOString(),
-    dirty: true,
-  };
-}
-
-async function readSnapshot(kv: StateKV): Promise<GraphSnapshot | null> {
-  try {
-    const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, SNAPSHOT_KEY);
-    if (snap && typeof snap === "object" && snap.version === 1) {
-      return snap;
-    }
-    return null;
-  } catch (err) {
-    logger.warn("Graph snapshot read failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  }
-}
+const emptySnapshot = emptyGraphSnapshot;
+const readSnapshot = readGraphSnapshot;
 
 function buildSnapshotFromArrays(
   nodes: GraphNode[],
@@ -894,39 +871,12 @@ export function registerGraphFunction(
         };
       }
 
-      // Query / startNodeId paths still need broader access. Race the
-      // live enumeration against a wall-clock budget so a long
-      // kv.list doesn't block the worker indefinitely. On timeout the
-      // caller gets a snapshot-backed approximation instead of a 500.
-      let allNodes: GraphNode[];
-      let allEdges: GraphEdge[];
-      try {
-        const [rawNodes, rawEdges] = await withTimeout(
-          Promise.all([
-            kv.list<GraphNode>(KV.graphNodes),
-            kv.list<GraphEdge>(KV.graphEdges),
-          ]),
-          LIVE_ENUMERATION_BUDGET_MS,
-          "graph-query enumeration",
-        );
-        allNodes = rawNodes.filter((n) => !n.stale);
-        allEdges = rawEdges.filter((e) => !e.stale);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn("Graph query enumeration timed out, using snapshot", {
-          error: msg,
-        });
-        const snap = await readSnapshot(kv);
-        if (snap) {
-          return {
-            ...paginateFromSnapshot(snap, data.nodeType, limit, offset),
-            warning:
-              "Live graph enumeration exceeded budget. Query / " +
-              "startNodeId paths degrade on >25K-node corpora until a " +
-              "per-node edge index lands. Result reflects top-degree " +
-              "snapshot, not the requested walk.",
-          };
-        }
+      // Query / startNodeId used to kv.list both graph tables. After a
+      // reset those scopes still hold orphaned pre-reset rows, so a
+      // live list is the old OOM path. The snapshot is the live graph.
+      const { snapshot, nodes: allNodes, edges: allEdges } =
+        await loadSnapshotGraph(kv);
+      if (!snapshot) {
         return {
           nodes: [],
           edges: [],
@@ -937,7 +887,9 @@ export function registerGraphFunction(
           limit,
           offset,
           warning:
-            "Graph enumeration exceeded budget and no snapshot is available.",
+            "No graph snapshot available. Query / startNodeId paths " +
+            "read the snapshot only; they do not enumerate KV.graphNodes " +
+            "or KV.graphEdges.",
         };
       }
 
@@ -1064,6 +1016,19 @@ export function registerGraphFunction(
       const forceRebuild = data?.force === true;
       try {
         const existing = await readSnapshot(kv);
+        if (existing?.resetAt) {
+          logger.warn("Graph snapshot rebuild refused: graph was reset", {
+            resetAt: existing.resetAt,
+          });
+          return {
+            success: false,
+            reset: true,
+            error:
+              "Graph was reset. Rebuild would enumerate orphaned pre-reset " +
+              "rows in KV.graphNodes/Edges. Let incremental extract refill " +
+              "the snapshot. Do not pass force to resurrect the old graph.",
+          };
+        }
         if (!existing && !forceRebuild) {
           logger.warn("Graph snapshot rebuild refused: no prior snapshot", {
             hint: "legacy corpus or empty store",

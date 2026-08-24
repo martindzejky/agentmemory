@@ -621,8 +621,8 @@ describe("Graph Functions", () => {
       };
     }
 
-    it("graph-query startNodeId returns warning envelope when enumeration exceeds budget", async () => {
-      const slow = slowKV(7000); // > LIVE_ENUMERATION_BUDGET_MS (6000ms)
+    it("graph-query startNodeId does not list graph tables and warns without a snapshot", async () => {
+      const slow = slowKV(7000);
       const localSdk = mockSdk();
       registerGraphFunction(localSdk as never, slow as never, mockProvider as never);
 
@@ -631,8 +631,9 @@ describe("Graph Functions", () => {
       })) as GraphQueryResult;
 
       expect(result.warning).toBeTruthy();
-      expect(result.warning).toMatch(/budget|enumeration/i);
-    }, 10000);
+      expect(result.warning).toMatch(/snapshot/i);
+      expect(result.nodes).toEqual([]);
+    });
 
     // CodeRabbit raised that slowKV(setTimeout) doesn't simulate a
     // blocked event loop. The real production failure is iii rejecting
@@ -650,7 +651,7 @@ describe("Graph Functions", () => {
       };
     }
 
-    it("graph-query rejects-from-engine path returns warning envelope (worker-death simulation)", async () => {
+    it("graph-query startNodeId still answers when kv.list would throw", async () => {
       const rejector = rejectingKV();
       const localSdk = mockSdk();
       registerGraphFunction(
@@ -706,6 +707,38 @@ describe("Graph Functions", () => {
 
     // #825: new pre-flight refusal when no snapshot exists (signals
     // legacy corpus that would crash on kv.list). force=true bypasses.
+    it("graph-snapshot-rebuild refuses after a reset even with force", async () => {
+      const localKv = mockKV();
+      await localKv.set("mem:graph:snapshot", "current", {
+        version: 1,
+        topNodes: [],
+        topEdges: [],
+        topDegrees: {},
+        stats: { totalNodes: 0, totalEdges: 0, nodesByType: {}, edgesByType: {} },
+        updatedAt: "1970-01-01T00:00:00.000Z",
+        dirty: true,
+        resetAt: "2026-08-24T15:30:00.000Z",
+      });
+      await localKv.set("mem:graph:nodes", "orphan", {
+        id: "orphan",
+        type: "concept",
+        name: "old",
+        properties: {},
+        sourceObservationIds: [],
+        createdAt: "2026-01-01T00:00:00Z",
+      });
+      const localSdk = mockSdk();
+      registerGraphFunction(localSdk as never, localKv as never, mockProvider as never);
+
+      const result = (await localSdk.trigger(
+        "mem::graph-snapshot-rebuild",
+        { force: true },
+      )) as { success: boolean; reset?: boolean; error?: string };
+      expect(result.success).toBe(false);
+      expect(result.reset).toBe(true);
+      expect(result.error).toMatch(/reset/i);
+    });
+
     it("graph-snapshot-rebuild refuses on legacy corpus (no snapshot) without force", async () => {
       const localKv = mockKV();
       // Seed nodes but never persist a snapshot → simulates a corpus

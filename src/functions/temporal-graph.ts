@@ -10,6 +10,7 @@ import type {
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 
 const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal knowledge extraction engine. Given observations, extract entities AND their temporal relationships with full context metadata.
 
@@ -280,8 +281,7 @@ export function registerTemporalGraphFunctions(
       asOf?: string;
       includeHistory?: boolean;
     }): Promise<TemporalState | { error: string }> => {
-      const allNodes = await kv.list<GraphNode>(KV.graphNodes);
-      const allEdges = await kv.list<GraphEdge>(KV.graphEdges);
+      const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(kv);
 
       const entity = allNodes.find(
         (n) =>
@@ -358,8 +358,7 @@ export function registerTemporalGraphFunctions(
       from?: string;
       to?: string;
     }) => {
-      const allNodes = await kv.list<GraphNode>(KV.graphNodes);
-      const allEdges = await kv.list<GraphEdge>(KV.graphEdges);
+      const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(kv);
       const historicalEdges = await kv
         .list<GraphEdge>(KV.graphEdgeHistory)
         .catch(() => [] as GraphEdge[]);
