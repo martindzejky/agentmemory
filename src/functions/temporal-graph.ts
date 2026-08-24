@@ -187,8 +187,8 @@ export function registerTemporalGraphFunctions(
         const obsIds = data.observations.map((o) => o.id);
         const { nodes, edges } = parseTemporalGraphXml(response, obsIds);
 
-        const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
-        const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
+        const { nodes: existingNodes, edges: existingEdges } =
+          await loadSnapshotGraph(kv);
 
         const idRemap = new Map<string, string>();
         for (const node of nodes) {

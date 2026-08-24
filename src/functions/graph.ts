@@ -29,6 +29,7 @@ import {
   emptyGraphSnapshot,
   loadSnapshotGraph,
   readGraphSnapshot,
+  snapshotCapWarning,
 } from "../state/graph-snapshot.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
@@ -153,6 +154,7 @@ function paginateFromSnapshot(
     limit,
     offset,
     fromSnapshot: true,
+    ...(snapshotCapWarning(snap) ? { warning: snapshotCapWarning(snap) } : {}),
   };
 }
 
@@ -342,6 +344,18 @@ function paginate(
     truncated: totalNodes > pageNodes.length,
     limit,
     offset,
+  };
+}
+
+function withSnapshotMeta(
+  page: GraphQueryResult,
+  snap: GraphSnapshot | null,
+): GraphQueryResult {
+  const warning = snapshotCapWarning(snap);
+  return {
+    ...page,
+    fromSnapshot: true,
+    ...(warning ? { warning } : {}),
   };
 }
 
@@ -902,7 +916,10 @@ export function registerGraphFunction(
               (v) => typeof v === "string" && v.toLowerCase().includes(lower),
             ),
         );
-        return paginate(matchingNodes, allEdges, 0, limit, offset);
+        return withSnapshotMeta(
+          paginate(matchingNodes, allEdges, 0, limit, offset),
+          snapshot,
+        );
       }
 
       if (data.startNodeId) {
@@ -944,7 +961,10 @@ export function registerGraphFunction(
           }
         }
 
-        return paginate(resultNodes, resultEdges, maxDepth, limit, offset);
+        return withSnapshotMeta(
+          paginate(resultNodes, resultEdges, maxDepth, limit, offset),
+          snapshot,
+        );
       }
 
       // Unreachable — noWalk branch handles the rest.

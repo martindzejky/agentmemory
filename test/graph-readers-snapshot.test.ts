@@ -2,14 +2,16 @@
 // After reset those scopes still hold orphaned pre-reset rows. The snapshot
 // is the live graph. See docs/investigations/2026-08-24-latency-and-oom.md.
 import { describe, it, expect, vi } from "vitest";
+import { registerCascadeFunction } from "../src/functions/cascade.js";
 import { registerGraphFunction } from "../src/functions/graph.js";
 import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
+import { registerReflectFunctions } from "../src/functions/reflect.js";
 import {
   GRAPH_SNAPSHOT_KEY,
   snapshotFromGraphTables,
 } from "../src/state/graph-snapshot.js";
 import { KV } from "../src/state/schema.js";
-import type { GraphEdge, GraphNode } from "../src/types.js";
+import type { GraphEdge, GraphNode, Memory } from "../src/types.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -122,5 +124,98 @@ describe("graph readers use the snapshot, not live tables", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(kv.listCalls).toEqual([]);
+  });
+
+  it("cascade-update does not list orphan tables", async () => {
+    const kv = mockKV();
+    const live = node("n_live", "railway");
+    const orphan = node("n_orphan", "orphaned");
+    const memory: Memory = {
+      id: "mem_old",
+      createdAt: "2026-08-24T00:00:00Z",
+      updatedAt: "2026-08-24T00:00:00Z",
+      type: "fact",
+      title: "Old fact",
+      content: "Old content",
+      concepts: ["react"],
+      files: [],
+      sessionIds: [],
+      strength: 5,
+      version: 1,
+      isLatest: false,
+      sourceObservationIds: ["obs_1"],
+    };
+    await kv.set(KV.memories, memory.id, memory);
+    await kv.set(KV.graphNodes, orphan.id, orphan);
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables([live], []),
+    );
+    kv.listCalls.length = 0;
+
+    const sdk = mockSdk();
+    registerCascadeFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::cascade-update", {
+      supersededMemoryId: memory.id,
+    })) as { success: boolean; flagged: { nodes: number } };
+
+    expect(result.success).toBe(true);
+    expect(result.flagged.nodes).toBe(1);
+    expect(kv.listCalls).not.toContain(KV.graphNodes);
+    expect(kv.listCalls).not.toContain(KV.graphEdges);
+  });
+
+  it("mem::reflect does not list orphan tables", async () => {
+    const kv = mockKV();
+    const n1 = node("n1", "security");
+    const n2 = node("n2", "validation");
+    const e = edge("e1", "n1", "n2");
+    const orphan = node("n_orphan", "orphaned");
+    await kv.set(KV.graphNodes, orphan.id, orphan);
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables([n1, n2], [e]),
+    );
+    kv.listCalls.length = 0;
+
+    const sdk = mockSdk();
+    registerReflectFunctions(sdk as never, kv as never, {
+      name: "noop-test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue("<insights></insights>"),
+    } as never);
+
+    const result = (await sdk.trigger("mem::reflect", {})) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    expect(kv.listCalls).not.toContain(KV.graphNodes);
+    expect(kv.listCalls).not.toContain(KV.graphEdges);
+  });
+
+  it("graph-query warns when the snapshot is capped", async () => {
+    const kv = mockKV();
+    const n = node("n1", "railway");
+    const snap = snapshotFromGraphTables([n], []);
+    snap.stats.totalNodes = 1200;
+    await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, snap);
+
+    const sdk = mockSdk();
+    registerGraphFunction(sdk as never, kv as never, {
+      name: "noop-test",
+      compress: vi.fn(),
+      summarize: vi.fn(),
+    } as never);
+
+    const result = (await sdk.trigger("mem::graph-query", {
+      query: "rail",
+    })) as { warning?: string; fromSnapshot?: boolean };
+
+    expect(result.fromSnapshot).toBe(true);
+    expect(result.warning).toMatch(/capped at 1 of 1200/);
   });
 });

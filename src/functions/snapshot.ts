@@ -15,6 +15,7 @@ import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { VERSION } from "../version.js";
 import { logger } from "../logger.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 import {
   indexRawEventIfPresent,
   pruneEventIdIndexEntry,
@@ -64,7 +65,7 @@ export function registerSnapshotFunction(
 
         const sessions = await kv.list<Session>(KV.sessions);
         const memories = await kv.list<Memory>(KV.memories);
-        const graphNodes = await kv.list<GraphNode>(KV.graphNodes);
+        const { nodes: graphNodes } = await loadSnapshotGraph(kv);
         const accessLogs = await kv
           .list<AccessLogExport>(KV.accessLog)
           .catch(() => [] as AccessLogExport[]);

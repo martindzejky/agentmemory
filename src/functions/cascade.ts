@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type { Memory, GraphNode, GraphEdge } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 
 export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::cascade-update", 
@@ -24,7 +25,7 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
 
       if (obsIds.size > 0) {
         const now = new Date().toISOString();
-        const nodes = await kv.list<GraphNode>(KV.graphNodes);
+        const { nodes, edges } = await loadSnapshotGraph(kv);
         for (const node of nodes) {
           if (node.stale) continue;
           const overlap = (node.sourceObservationIds ?? []).some((id) => obsIds.has(id));
@@ -41,7 +42,6 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
           }
         }
 
-        const edges = await kv.list<GraphEdge>(KV.graphEdges);
         for (const edge of edges) {
           if (edge.stale) continue;
           const overlap = (edge.sourceObservationIds ?? []).some((id) => obsIds.has(id));

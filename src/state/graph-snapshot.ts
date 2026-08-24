@@ -80,3 +80,18 @@ export async function loadSnapshotGraph(kv: StateKV): Promise<{
   const snapshot = await readGraphSnapshot(kv);
   return { snapshot, ...snapshotGraphTables(snapshot) };
 }
+
+export function snapshotCapWarning(
+  snap: GraphSnapshot | null,
+): string | undefined {
+  if (!snap) return undefined;
+  const visible = (snap.topNodes ?? []).length;
+  const total = snap.stats?.totalNodes ?? 0;
+  if (total > visible) {
+    return (
+      `Graph snapshot is capped at ${visible} of ${total} nodes. ` +
+      "Query, export, retrieval, and related readers see the top-degree subset only."
+    );
+  }
+  return undefined;
+}

@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 
 function isPrivateIP(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1" || ip === "0.0.0.0") return true;
@@ -435,16 +436,19 @@ async function collectSyncData(
     result.relations = deltaFilter(all, sinceTime, "createdAt");
   }
 
-  if (scopes.includes("graph:nodes") && !projectScoped) {
-    const all = await kv.list<GraphNode>(KV.graphNodes);
-    result.graphNodes = all.filter(
-      (n) => new Date(graphNodeTs(n)).getTime() > sinceTime,
-    );
-  }
-
-  if (scopes.includes("graph:edges") && !projectScoped) {
-    const all = await kv.list<GraphEdge>(KV.graphEdges);
-    result.graphEdges = deltaFilter(all, sinceTime, "createdAt");
+  if (
+    (scopes.includes("graph:nodes") || scopes.includes("graph:edges")) &&
+    !projectScoped
+  ) {
+    const { nodes, edges } = await loadSnapshotGraph(kv);
+    if (scopes.includes("graph:nodes")) {
+      result.graphNodes = nodes.filter(
+        (n) => new Date(graphNodeTs(n)).getTime() > sinceTime,
+      );
+    }
+    if (scopes.includes("graph:edges")) {
+      result.graphEdges = deltaFilter(edges, sinceTime, "createdAt");
+    }
   }
 
   return result;
