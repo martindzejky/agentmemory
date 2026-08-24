@@ -160,8 +160,7 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
   if (!allowAgentSdk) {
     process.stderr.write(
       pc.dim(
-        "[agentmemory] No LLM provider key set — running zero-LLM with BM25 search. " +
-          "Set EMBEDDING_PROVIDER=local for on-device semantic embeddings. " +
+        "[agentmemory] No LLM provider key set — running zero-LLM (BM25 + on-device embeddings). " +
           "Set ANTHROPIC_API_KEY (or GEMINI/OPENAI/OPENROUTER/MINIMAX) in ~/.agentmemory/.env for LLM compression and summaries. " +
           "Agent-SDK fallback stays off by default to avoid a Stop-hook recursion loop; opt in with AGENTMEMORY_AUTO_COMPRESS=true + AGENTMEMORY_ALLOW_AGENT_SDK=true.\n",
       ),
@@ -199,8 +198,6 @@ export function loadConfig(): AgentMemoryConfig {
   const streamsPort =
     parseInt(env["III_STREAM_PORT"] || env["III_STREAMS_PORT"] || "", 10) ||
     restPort + 1;
-  const viewerPort =
-    parseInt(env["III_VIEWER_PORT"] || "", 10) || restPort + 2;
   const engineUrl =
     env["III_ENGINE_URL"] ||
     `ws://localhost:${
@@ -211,7 +208,6 @@ export function loadConfig(): AgentMemoryConfig {
     engineUrl,
     restPort,
     streamsPort,
-    viewerPort,
     provider,
     tokenBudget: safeParseInt(env["TOKEN_BUDGET"], 2000),
     maxObservationsPerSession: safeParseInt(env["MAX_OBS_PER_SESSION"], 500),
