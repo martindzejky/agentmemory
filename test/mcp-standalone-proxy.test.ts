@@ -50,6 +50,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     const body = JSON.parse(res.content[0].text);
     expect(body.sessions).toHaveLength(1);
     expect(body.sessions[0].id).toBe("sess-1");
+    expect(res.structuredContent).toBeUndefined();
     expect(calls.find((c) => c.url.includes("/sessions"))).toBeDefined();
   });
 
@@ -245,6 +246,10 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
                 text: JSON.stringify({ saved: "lesson_xyz" }),
               },
             ],
+            structuredContent: {
+              success: true,
+              lesson: { id: "lesson_xyz", title: "Always pin lockfiles" },
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -258,6 +263,10 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     });
     const body = JSON.parse(res.content[0].text);
     expect(body.saved).toBe("lesson_xyz");
+    expect(res.structuredContent).toEqual({
+      success: true,
+      lesson: { id: "lesson_xyz", title: "Always pin lockfiles" },
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0].body).toEqual({
       name: "memory_lesson_save",

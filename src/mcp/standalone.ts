@@ -3,7 +3,6 @@
 import { InMemoryKV } from "./in-memory-kv.js";
 import { createStdioTransport } from "./transport.js";
 import { getAllTools } from "./tools-registry.js";
-import { mcpToolResult } from "./tool-result.js";
 import { getStandalonePersistPath } from "../config.js";
 import { VERSION } from "../version.js";
 import { generateId } from "../state/schema.js";
@@ -92,12 +91,17 @@ function parseLimit(raw: unknown, fallback = DEFAULT_LIMIT): number {
 
 function textResponse(payload: unknown, pretty = false): {
   content: Array<{ type: string; text: string }>;
-  structuredContent: Record<string, unknown>;
 } {
-  return mcpToolResult(payload, {
-    pretty,
-    wrapArrayAs: "entries",
-  });
+  return {
+    content: [
+      {
+        type: "text",
+        text: pretty
+          ? JSON.stringify(payload, null, 2)
+          : JSON.stringify(payload),
+      },
+    ],
+  };
 }
 
 interface Validated {
@@ -190,7 +194,6 @@ async function handleProxy(
   handle: ProxyHandle,
 ): Promise<{
   content: Array<{ type: string; text: string }>;
-  structuredContent: Record<string, unknown>;
 }> {
   switch (v.tool) {
     case "memory_save": {
@@ -265,7 +268,6 @@ async function handleLocal(
   kvInstance: InMemoryKV,
 ): Promise<{
   content: Array<{ type: string; text: string }>;
-  structuredContent: Record<string, unknown>;
 }> {
   switch (v.tool) {
     case "memory_save": {

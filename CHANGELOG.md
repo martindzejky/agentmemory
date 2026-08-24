@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **MCP output schemas and structured results for every tool.** All 54 tools in `getVisibleTools()` now declare an `outputSchema` derived from the real `mem::` return shapes. Successful `POST /agentmemory/mcp/call` responses include `structuredContent` that validates against that schema, while the existing `content` text blocks stay in place for older clients. Feature-disabled catch paths return `{ status: "unavailable", message }` instead of a one-off plain-text shape; array results such as audit entries are wrapped as `{ entries }`.
+- **MCP output schemas and structured results for every tool.** All 54 tools in `getVisibleTools()` now declare an `outputSchema` derived from the real `mem::` return shapes. Successful `POST /agentmemory/mcp/call` responses include `structuredContent` that validates against that schema, while the existing `content` text blocks stay in place for older clients. The standalone shim still returns text-only `content` for its REST-proxy and local-fallback paths (those bodies do not match the `mem::` schemas); it passes server `structuredContent` through only when forwarding to `/agentmemory/mcp/call`. Feature-disabled catch paths return `{ status: "unavailable", message }` instead of a one-off plain-text shape; array results such as audit entries are wrapped as `{ entries }`.
 
 ## [0.9.29] — 2026-08-16
 
