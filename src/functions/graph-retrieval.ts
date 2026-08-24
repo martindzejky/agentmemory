@@ -4,6 +4,8 @@ import type {
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
+import { getGraphSearchBudgetMs, getGraphSearchMaxSeeds } from "../config.js";
+import { recordDeadlineExceeded } from "../utils/deadline.js";
 
 export interface GraphRetrievalResult {
   obsId: string;
@@ -11,6 +13,11 @@ export interface GraphRetrievalResult {
   score: number;
   graphContext: string;
   pathLength: number;
+}
+
+interface TraversalContext {
+  nodeIndex: Map<string, GraphNode>;
+  adjacency: Map<string, Array<{ neighborId: string; edge: GraphEdge }>>;
 }
 
 function buildGraphContext(
@@ -60,14 +67,36 @@ export class GraphRetrieval {
 
     if (matchingNodes.length === 0) return [];
 
+    // A broad entity match ("Railway", "src") can match thousands of nodes.
+    // Traversal cost is O(seeds x edges), which measured 62s for a single call
+    // on a 32K-node / 61K-edge graph. Highest-degree seeds first: they reach the
+    // most of the graph per unit of work.
+    const degree = new Map<string, number>();
+    for (const edge of allEdges) {
+      degree.set(edge.sourceNodeId, (degree.get(edge.sourceNodeId) ?? 0) + 1);
+      degree.set(edge.targetNodeId, (degree.get(edge.targetNodeId) ?? 0) + 1);
+    }
+    const seeds = matchingNodes
+      .slice()
+      .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
+      .slice(0, getGraphSearchMaxSeeds());
+
+    // Adjacency was previously rebuilt inside dijkstraTraversal for every seed,
+    // an O(V+E) pass each time. Build it once and share it.
+    const shared = this.buildTraversalContext(allNodes, allEdges);
+    const budgetExpiresAt = Date.now() + getGraphSearchBudgetMs();
+
     const results: GraphRetrievalResult[] = [];
     const visitedObs = new Set<string>();
 
-    for (const startNode of matchingNodes) {
+    for (const startNode of seeds) {
+      if (Date.now() >= budgetExpiresAt) {
+        recordDeadlineExceeded("graph.searchByEntities");
+        break;
+      }
       const paths = this.dijkstraTraversal(
         startNode,
-        allNodes,
-        allEdges,
+        shared,
         maxDepth,
       );
 
@@ -122,15 +151,22 @@ export class GraphRetrieval {
     const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
     const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
 
-    const linkedNodes = allNodes.filter((n) =>
-      n.sourceObservationIds.some((id) => obsIds.includes(id)),
-    );
+    const linkedNodes = allNodes
+      .filter((n) => n.sourceObservationIds.some((id) => obsIds.includes(id)))
+      .slice(0, getGraphSearchMaxSeeds());
+
+    const shared = this.buildTraversalContext(allNodes, allEdges);
+    const budgetExpiresAt = Date.now() + getGraphSearchBudgetMs();
 
     const results: GraphRetrievalResult[] = [];
     const visitedObs = new Set<string>(obsIds);
 
     for (const node of linkedNodes) {
-      const paths = this.dijkstraTraversal(node, allNodes, allEdges, maxDepth);
+      if (Date.now() >= budgetExpiresAt) {
+        recordDeadlineExceeded("graph.expandFromChunks");
+        break;
+      }
+      const paths = this.dijkstraTraversal(node, shared, maxDepth);
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
         for (const obsId of lastNode.sourceObservationIds) {
@@ -238,12 +274,12 @@ export class GraphRetrieval {
   //   - Min-heap dequeue is O(log V) per pop (previous queue.shift()
   //     was O(n) — the dominant cost on graphs above ~200 nodes per
   //     the contributor's benchmark in #328).
-  private dijkstraTraversal(
-    startNode: GraphNode,
+  // Built once per retrieval call and shared across seeds. Building it per seed
+  // is what made a wide entity match quadratic.
+  private buildTraversalContext(
     allNodes: GraphNode[],
     allEdges: GraphEdge[],
-    maxDepth: number,
-  ): Array<Array<{ node: GraphNode; edge?: GraphEdge }>> {
+  ): TraversalContext {
     const nodeIndex = new Map<string, GraphNode>();
     for (const n of allNodes) nodeIndex.set(n.id, n);
 
@@ -257,6 +293,14 @@ export class GraphRetrieval {
       adjacency.get(b)!.push({ neighborId: a, edge });
     }
 
+    return { nodeIndex, adjacency };
+  }
+
+  private dijkstraTraversal(
+    startNode: GraphNode,
+    { nodeIndex, adjacency }: TraversalContext,
+    maxDepth: number,
+  ): Array<Array<{ node: GraphNode; edge?: GraphEdge }>> {
     const dist = new Map<string, number>();
     const pathTo = new Map<string, Array<{ node: GraphNode; edge?: GraphEdge }>>();
     dist.set(startNode.id, 0);

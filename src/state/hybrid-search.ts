@@ -16,6 +16,7 @@ import {
 } from "../functions/graph-retrieval.js";
 import { extractEntitiesFromQuery } from "../functions/query-expansion.js";
 import { rerank } from "./reranker.js";
+import { isGraphSearchEnabled } from "../config.js";
 
 const RRF_K = 60;
 
@@ -101,32 +102,47 @@ export class HybridSearch {
       }
     }
 
-    const entities =
-      entityHints && entityHints.length > 0
-        ? entityHints
-        : extractEntitiesFromQuery(query);
+    // The graph stream is opt-in. Both entry points below enumerate all of
+    // KV.graphNodes and KV.graphEdges, which is unpaginated: 60.8 MB of JSON and
+    // ~2.1s per query at 32K nodes / 61K edges, plus engine RSS that is never
+    // released. See docs/investigations/2026-08-24-latency-and-oom.md.
     let graphResults: GraphRetrievalResult[] = [];
-    if (entities.length > 0) {
-      try {
-        graphResults = await this.graphRetrieval.searchByEntities(
-          entities,
-          2,
-          limit,
-        );
-      } catch {
-        // graph search is best-effort
+    if (isGraphSearchEnabled()) {
+      const entities =
+        entityHints && entityHints.length > 0
+          ? entityHints
+          : extractEntitiesFromQuery(query);
+      if (entities.length > 0) {
+        try {
+          graphResults = await this.graphRetrieval.searchByEntities(
+            entities,
+            2,
+            limit,
+          );
+        } catch {
+          // graph search is best-effort
+        }
       }
-    }
 
-    const topVectorObs = vectorResults.slice(0, 5).map((r) => r.obsId);
-    if (topVectorObs.length > 0) {
-      try {
-        const expansionResults =
-          await this.graphRetrieval.expandFromChunks(topVectorObs, 1, 5);
-        graphResults = [...graphResults, ...expansionResults];
-      } catch {
-        // expansion is best-effort
+      const topVectorObs = vectorResults.slice(0, 5).map((r) => r.obsId);
+      if (topVectorObs.length > 0) {
+        try {
+          const expansionResults =
+            await this.graphRetrieval.expandFromChunks(topVectorObs, 1, 5);
+          graphResults = [...graphResults, ...expansionResults];
+        } catch {
+          // expansion is best-effort
+        }
       }
+
+      // GraphRetrieval hardcodes sessionId: "" on every result, so hydration
+      // reads scope "mem:obs:" and drops all of them (upstream #937). The BM25
+      // index already knows which session each observation belongs to.
+      graphResults = graphResults.map((r) =>
+        r.sessionId
+          ? r
+          : { ...r, sessionId: this.bm25.sessionIdFor(r.obsId) ?? "" },
+      );
     }
 
     const scores = new Map<
