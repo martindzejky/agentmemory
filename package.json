@@ -88,5 +88,11 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.5": true,
+    "sharp@0.34.5": true,
+    "fsevents@2.3.3": true
   }
 }
