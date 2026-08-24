@@ -130,6 +130,9 @@ export function registerHealthMonitor(
         searchInFlight: searchGate.inFlight,
         searchQueued: searchGate.queued,
         embedQueued: embed.queued,
+        // The widest enumeration seen so far, because "what was it reading when
+        // it died" is the first question after an OOM.
+        widestKvList: getKvListStats(1)[0],
       };
       if (evaluated.status === "healthy") logger.info("Health recovered", line);
       else logger.warn("Health degraded", line);

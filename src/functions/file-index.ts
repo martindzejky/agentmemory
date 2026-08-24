@@ -7,6 +7,11 @@ import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
 import { getEnrichBudgetMs } from "../config.js";
 import { recordDeadlineExceeded } from "../utils/deadline.js";
+import {
+  getFileCandidatesCached,
+  getSessionsCached,
+  type FileCandidate,
+} from "../state/file-context-cache.js";
 
 interface FileHistory {
   file: string;
@@ -46,7 +51,7 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
       }
       const results: FileHistory[] = [];
 
-      const sessions = await kv.list<Session>(KV.sessions);
+      const sessions = await getSessionsCached(() => kv.list<Session>(KV.sessions));
       let otherSessions = sessionId
         ? sessions.filter((s) => s.id !== sessionId)
         : sessions;
@@ -66,7 +71,7 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
       // spent and answer from the sessions already loaded: the most recent
       // sessions are loaded first, so partial coverage is the useful part.
       const budgetExpiresAt = Date.now() + getEnrichBudgetMs();
-      const obsCache = new Map<string, CompressedObservation[]>();
+      const obsCache = new Map<string, FileCandidate[]>();
       for (const session of otherSessions) {
         if (Date.now() >= budgetExpiresAt) {
           recordDeadlineExceeded("file-context.session-scan");
@@ -74,7 +79,9 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         }
         obsCache.set(
           session.id,
-          await kv.list<CompressedObservation>(KV.observations(session.id)),
+          await getFileCandidatesCached(session.id, () =>
+            kv.list<CompressedObservation>(KV.observations(session.id)),
+          ),
         );
       }
       otherSessions = otherSessions.filter((s) => obsCache.has(s.id));
@@ -86,8 +93,9 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         for (const session of otherSessions) {
           const observations = obsCache.get(session.id) || [];
 
+          // The importance >= 4, non-empty-files and title filters are applied
+          // when the candidates are cached.
           for (const obs of observations) {
-            if (!obs.files || !obs.title) continue;
             const matches = obs.files.some(
               (f) =>
                 f === file ||
@@ -95,10 +103,10 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
                 f.endsWith(`/${normalizedFile}`) ||
                 normalizedFile.endsWith(`/${f}`),
             );
-            if (matches && obs.importance >= 4) {
+            if (matches) {
               history.observations.push({
                 sessionId: session.id,
-                obsId: obs.id,
+                obsId: obs.obsId,
                 type: obs.type,
                 title: obs.title,
                 narrative: obs.narrative,

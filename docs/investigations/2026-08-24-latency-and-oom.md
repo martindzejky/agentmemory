@@ -369,3 +369,72 @@ Implemented in this branch:
    per-operation timings, in-flight and queued counters, deadline-exceeded
    counters, and slow-operation warnings — all low-volume.
 8. **Graph extraction watermark** advances on zero-result extractions again.
+
+## Results
+
+Same build, same local instance, same production-shaped corpus (32,127 graph
+nodes / 61,577 edges, 1,064 sessions), same load: 6 concurrent simulated Cursor
+tool calls, each firing `/observe` and `/enrich` in parallel with the real
+2500 ms client abort. Reproduce with `npm run bench:hook-burst`.
+
+The only difference between the two columns is `AGENTMEMORY_GRAPH_SEARCH`:
+
+| | graph stream on | graph stream off (new default) |
+|---|---|---|
+| `/enrich` p50 | 1.827 s | **0.161 s** |
+| `/enrich` p95 | 1.988 s | 0.754 s |
+| `/observe` p50 | 1.051 s | **0.054 s** |
+| `/observe` p95 | 1.423 s | 0.088 s |
+| engine RSS over the run | 263 → 1264 MB (**+1001 MB**) | 304 → 304 MB (**+0 MB**) |
+| worker RSS over the run | 107 → 613 MB | 109 → 324 MB |
+| wall clock for 20 tool calls | 13 s | 2 s |
+
+Note the `/observe` row: observe performs no search at all, yet its latency rose
+by 30x with the graph stream on. That is the shared event loop — one enumeration
+blocks every other request in the worker, which is why observes were timing out
+alongside enriches in production.
+
+Soak, four consecutive bursts (480 requests total, graph stream off):
+
+```
+soak 1/4 enrich p50=0.161s observe p50=0.054s  engine 304->304MB  worker 109->324MB
+soak 2/4 enrich p50=0.131s observe p50=0.069s  engine 304->304MB  worker 324->350MB
+soak 3/4 enrich p50=0.181s observe p50=0.182s  engine 304->304MB  worker 350->387MB
+soak 4/4 enrich p50=0.200s observe p50=0.203s  engine 304->304MB  worker 387->422MB
+```
+
+Zero client aborts across all 480 requests, no latency drift between the first
+and last burst, and engine RSS completely flat. Worker RSS climbs to a plateau
+under load and falls back afterwards (442 MB at peak, 269 MB once idle) — the
+climb is the local embedding model and the in-memory indexes, and production uses
+a remote embedding provider. Compare with the pre-fix engine, which went from
+240 MB to 1120 MB and stayed there.
+
+The new `kvLists` accounting also caught a bug in the file-context cache added
+here: a per-session invalidation was clearing the shared session list, so the
+list was being re-enumerated 129 times across 180 enrich calls. After the fix,
+3 times across 240 calls, and per-session observation enumerations dropped from
+15 per enrich to 2.5.
+
+## Not fixed, and worth knowing
+
+- **Graph recall is off, not repaired.** The stream is bounded and its results
+  now carry a usable sessionId, but re-enabling it still enumerates both graph
+  tables per query. Making it genuinely cheap needs an adjacency and name-token
+  index maintained on the write path (upstream already built `graphNameIndex`,
+  `graphEdgeKey` and `graphNodeDegree` for the write path in #814/#816; the read
+  path needs the equivalent) plus a one-off backfill for existing rows.
+- **The graph tables are never pruned.** 32,127 nodes and 61,577 edges remain on
+  disk. `POST /agentmemory/graph/reset` wipes graph state without touching
+  observations, and with the watermark fixed in place the graph would rebuild
+  incrementally at a sane size. Worth doing, but it is a data decision for the
+  operator, not something to bundle into this change.
+- **Real cancellation is impossible today.** iii's HTTP trigger exposes no abort
+  signal and the SDK protocol has no cancel message, so deadlines are the
+  ceiling: they stop a request from starting more work, they cannot interrupt an
+  in-flight KV round-trip. Upstream would have to add cancellation to the engine
+  protocol for anything stronger.
+- **`mem::compress` averages 4456 ms** across 6,728 production calls and
+  `mem::summarize` 6909 ms. Both are off the request path, but neither has a
+  concurrency cap, so a burst of auto-compress work still competes for the same
+  event loop. Worth a bounded worker pool next.

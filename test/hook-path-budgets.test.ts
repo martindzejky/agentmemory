@@ -28,7 +28,14 @@ import {
   setEmbeddingProvider,
 } from "../src/functions/search.js";
 import { VectorIndex } from "../src/state/vector-index.js";
-import type { EmbeddingProvider } from "../src/types.js";
+import { registerFileIndexFunction } from "../src/functions/file-index.js";
+import { invalidateFileContextCache } from "../src/state/file-context-cache.js";
+import { KV } from "../src/state/schema.js";
+import type {
+  CompressedObservation,
+  EmbeddingProvider,
+  Session,
+} from "../src/types.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -123,6 +130,112 @@ describe("enrich budget", () => {
     expect(result.context).toContain("ctx");
     expect(result.context).toContain("relevant memory");
     expect(getDeadlineExceededCounts()).toEqual({});
+  });
+});
+
+describe("file-context enumeration reuse", () => {
+  // file-context ran one kv.list of KV.sessions plus one per candidate session
+  // on every file-touching tool call: 16 enumerations per enrich, measured as
+  // 3840 across 240 enrich calls. The candidate sessions are other, historical
+  // sessions, so repeating that work per tool call is pure waste.
+  function countingKV() {
+    const store = new Map<string, Map<string, unknown>>();
+    const listCalls: string[] = [];
+    return {
+      listCalls,
+      get: async <T>(scope: string, key: string): Promise<T | null> =>
+        (store.get(scope)?.get(key) as T) ?? null,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (!store.has(scope)) store.set(scope, new Map());
+        store.get(scope)!.set(key, data);
+        return data;
+      },
+      update: async () => {},
+      delete: async (scope: string, key: string): Promise<void> => {
+        store.get(scope)?.delete(key);
+      },
+      list: async <T>(scope: string): Promise<T[]> => {
+        listCalls.push(scope);
+        const entries = store.get(scope);
+        return entries ? (Array.from(entries.values()) as T[]) : [];
+      },
+    };
+  }
+
+  async function seed(kv: ReturnType<typeof countingKV>) {
+    await kv.set(KV.sessions, "ses_old", {
+      id: "ses_old",
+      project: "ebox-app",
+      cwd: "/w",
+      startedAt: "2026-02-01T09:00:00Z",
+      updatedAt: "2026-02-01T09:30:00Z",
+      observationCount: 1,
+      status: "active",
+    } as Session);
+    await kv.set(KV.observations("ses_old"), "obs_old", {
+      id: "obs_old",
+      sessionId: "ses_old",
+      timestamp: "2026-02-01T09:15:00Z",
+      type: "file_edit",
+      title: "Edited the handler",
+      facts: [],
+      narrative: "Edited src/handler.ts to fix the timeout",
+      concepts: [],
+      files: ["src/handler.ts"],
+      importance: 7,
+    } as CompressedObservation);
+  }
+
+  beforeEach(() => {
+    invalidateFileContextCache();
+  });
+
+  afterEach(() => {
+    invalidateFileContextCache();
+  });
+
+  it("reuses the session and candidate enumerations across calls", async () => {
+    const sdk = mockSdk();
+    const kv = countingKV();
+    await seed(kv);
+    registerFileIndexFunction(sdk as never, kv as never);
+
+    const call = () =>
+      sdk.trigger({
+        function_id: "mem::file-context",
+        payload: { sessionId: "ses_new", files: ["src/handler.ts"] },
+      }) as Promise<{ context: string }>;
+
+    const first = await call();
+    expect(first.context).toContain("Edited the handler");
+    const afterFirst = kv.listCalls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    const second = await call();
+    expect(second.context).toContain("Edited the handler");
+    expect(kv.listCalls.length).toBe(afterFirst);
+  });
+
+  it("re-reads a session after its cache entry is invalidated", async () => {
+    const sdk = mockSdk();
+    const kv = countingKV();
+    await seed(kv);
+    registerFileIndexFunction(sdk as never, kv as never);
+
+    await sdk.trigger({
+      function_id: "mem::file-context",
+      payload: { sessionId: "ses_new", files: ["src/handler.ts"] },
+    });
+    const afterFirst = kv.listCalls.length;
+
+    invalidateFileContextCache("ses_old");
+
+    await sdk.trigger({
+      function_id: "mem::file-context",
+      payload: { sessionId: "ses_new", files: ["src/handler.ts"] },
+    });
+    expect(kv.listCalls).toContain(KV.observations("ses_old"));
+    expect(kv.listCalls.length).toBeGreaterThan(afterFirst);
   });
 });
 

@@ -28,6 +28,7 @@ import {
 } from "../config.js";
 import { normalizeRequestAgentId } from "../functions/ensure-session.js";
 import { getOperationStats } from "../utils/op-timing.js";
+import { getKvListStats } from "../state/kv-metrics.js";
 
 type Response = {
   status_code: number;
@@ -331,8 +332,10 @@ export function registerApiTriggers(
           functionMetrics,
           circuitBreaker,
           // Live in this process rather than from the 30s snapshot, so a
-          // /health poll during a slow phase shows the current picture.
+          // /health poll during a slow phase shows the current picture. The
+          // snapshot keeps its own copy for post-mortem after a crash.
           operations: getOperationStats(),
+          kvLists: getKvListStats(),
           ...instanceInfo(),
         },
       };
