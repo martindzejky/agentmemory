@@ -1,3 +1,6 @@
+import type { JsonSchema } from "./json-schema.js";
+import { toolOutputSchemas, type ToolOutputName } from "./output-schemas.js";
+
 export type McpToolDef = {
   name: string;
   description: string;
@@ -6,9 +9,20 @@ export type McpToolDef = {
     properties: Record<string, { type: string; description: string }>;
     required?: string[];
   };
+  outputSchema: JsonSchema;
 };
 
-export const CORE_TOOLS: McpToolDef[] = [
+type McpToolInputDef = Omit<McpToolDef, "outputSchema">;
+
+function attachOutputSchema(def: McpToolInputDef): McpToolDef {
+  const schema = toolOutputSchemas[def.name as ToolOutputName];
+  if (!schema) {
+    throw new Error(`Missing MCP outputSchema for tool ${def.name}`);
+  }
+  return { ...def, outputSchema: schema };
+}
+
+export const CORE_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_recall",
     description:
@@ -247,7 +261,7 @@ export const CORE_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V040_TOOLS: McpToolDef[] = [
+export const V040_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_claude_bridge_sync",
     description:
@@ -363,7 +377,7 @@ export const V040_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V050_TOOLS: McpToolDef[] = [
+export const V050_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_action_create",
     description:
@@ -585,7 +599,7 @@ export const V050_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V051_TOOLS: McpToolDef[] = [
+export const V051_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_sentinel_create",
     description:
@@ -743,7 +757,7 @@ export const V051_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V061_TOOLS: McpToolDef[] = [
+export const V061_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_verify",
     description:
@@ -761,7 +775,7 @@ export const V061_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V070_TOOLS: McpToolDef[] = [
+export const V070_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_lesson_save",
     description:
@@ -837,7 +851,7 @@ export const V070_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V073_TOOLS: McpToolDef[] = [
+export const V073_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_reflect",
     description:
@@ -871,7 +885,7 @@ export const V073_TOOLS: McpToolDef[] = [
   },
 ];
 
-export const V010_SLOTS_TOOLS: McpToolDef[] = [
+export const V010_SLOTS_TOOLS: McpToolInputDef[] = [
   {
     name: "memory_slot_list",
     description:
@@ -964,7 +978,7 @@ export function getAllTools(): McpToolDef[] {
     ...V070_TOOLS,
     ...V073_TOOLS,
     ...V010_SLOTS_TOOLS,
-  ];
+  ].map(attachOutputSchema);
 }
 
 // default switched from "core" (8 essential tools) to "all"

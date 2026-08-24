@@ -88,6 +88,7 @@ describe("Tools Registry", () => {
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.properties).toBeDefined();
+      expect(tool.outputSchema).toBeDefined();
     }
   });
 });
@@ -184,6 +185,21 @@ describe("handleToolCall", () => {
       expect.any(String),
       "utf-8",
     );
+  });
+
+  it("local fallback keeps text-only results for REST/local shapes", async () => {
+    const kv = new InMemoryKV();
+    const save = await handleToolCall(
+      "memory_save",
+      { content: "schema mismatch guard" },
+      kv,
+    );
+    const sessions = await handleToolCall("memory_sessions", { limit: 5 }, kv);
+    const audit = await handleToolCall("memory_audit", { limit: 5 }, kv);
+    expect(save.structuredContent).toBeUndefined();
+    expect(sessions.structuredContent).toBeUndefined();
+    expect(audit.structuredContent).toBeUndefined();
+    expect(JSON.parse(save.content[0].text).saved).toMatch(/^mem_/);
   });
 
   it("memory_save without persist path does not call writeFileSync", async () => {

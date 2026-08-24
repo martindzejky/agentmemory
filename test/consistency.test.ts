@@ -63,12 +63,18 @@ describe("Consistency checks", () => {
     expect(names.size).toBe(tools.length);
   });
 
-  it("all tools have name, description, and inputSchema", () => {
+  it("all tools have name, description, inputSchema, and outputSchema", () => {
     for (const tool of getAllTools()) {
       expect(tool.name).toBeTruthy();
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");
+      expect(tool.outputSchema).toBeDefined();
+      expect(
+        tool.outputSchema.type === "object" ||
+          Array.isArray(tool.outputSchema.oneOf) ||
+          Array.isArray(tool.outputSchema.anyOf),
+      ).toBe(true);
     }
   });
 

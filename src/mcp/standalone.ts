@@ -94,7 +94,12 @@ function textResponse(payload: unknown, pretty = false): {
 } {
   return {
     content: [
-      { type: "text", text: JSON.stringify(payload, null, pretty ? 2 : 0) },
+      {
+        type: "text",
+        text: pretty
+          ? JSON.stringify(payload, null, 2)
+          : JSON.stringify(payload),
+      },
     ],
   };
 }
@@ -187,7 +192,9 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
 async function handleProxy(
   v: Validated,
   handle: ProxyHandle,
-): Promise<{ content: Array<{ type: string; text: string }> }> {
+): Promise<{
+  content: Array<{ type: string; text: string }>;
+}> {
   switch (v.tool) {
     case "memory_save": {
       const result = await handle.call("/agentmemory/remember", {
@@ -259,7 +266,9 @@ async function handleProxy(
 async function handleLocal(
   v: Validated,
   kvInstance: InMemoryKV,
-): Promise<{ content: Array<{ type: string; text: string }> }> {
+): Promise<{
+  content: Array<{ type: string; text: string }>;
+}> {
   switch (v.tool) {
     case "memory_save": {
       const id = generateId("mem");
@@ -356,7 +365,10 @@ async function handleProxyGeneric(
   toolName: string,
   args: Record<string, unknown>,
   handle: ProxyHandle,
-): Promise<{ content: Array<{ type: string; text: string }> }> {
+): Promise<{
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
   // Forward to the server's full MCP surface so non-Claude clients can
   // reach all 54 tools (lessons, sentinels, slots, signals, graph, …)
   // instead of being capped at the 7 IMPLEMENTED_TOOLS set baked into
@@ -364,9 +376,17 @@ async function handleProxyGeneric(
   const result = (await handle.call("/agentmemory/mcp/call", {
     method: "POST",
     body: JSON.stringify({ name: toolName, arguments: args }),
-  })) as { content?: Array<{ type: string; text: string }> } | null;
+  })) as {
+    content?: Array<{ type: string; text: string }>;
+    structuredContent?: Record<string, unknown>;
+  } | null;
   if (result && Array.isArray(result.content)) {
-    return { content: result.content };
+    return {
+      content: result.content,
+      ...(result.structuredContent && typeof result.structuredContent === "object"
+        ? { structuredContent: result.structuredContent }
+        : {}),
+    };
   }
   return textResponse(result, true);
 }
@@ -375,7 +395,10 @@ export async function handleToolCall(
   toolName: string,
   args: Record<string, unknown>,
   kvInstance: InMemoryKV = kv,
-): Promise<{ content: Array<{ type: string; text: string }> }> {
+): Promise<{
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
   const handle = await resolveHandle();
   announceMode(handle);
 
