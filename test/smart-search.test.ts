@@ -1,21 +1,32 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 import { registerSmartSearchFunction } from "../src/functions/smart-search.js";
+import { getSearchIndex } from "../src/functions/search.js";
+import { KV } from "../src/state/schema.js";
+import { memoryToObservation } from "../src/state/memory-utils.js";
 import type {
   CompressedObservation,
   HybridSearchResult,
   CompactSearchResult,
+  Memory,
   Session,
 } from "../src/types.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
+  const listCalls: string[] = [];
+  const throwOnGet = new Set<string>();
   return {
+    listCalls,
+    throwOnGet,
     get: async <T>(scope: string, key: string): Promise<T | null> => {
+      if (throwOnGet.has(`${scope}:${key}`)) {
+        throw new Error(`kv.get(${scope}) exceeded 15000ms`);
+      }
       return (store.get(scope)?.get(key) as T) ?? null;
     },
     set: async <T>(scope: string, key: string, data: T): Promise<T> => {
@@ -27,6 +38,7 @@ function mockKV() {
       store.get(scope)?.delete(key);
     },
     list: async <T>(scope: string): Promise<T[]> => {
+      listCalls.push(scope);
       const entries = store.get(scope);
       return entries ? (Array.from(entries.values()) as T[]) : [];
     },
@@ -110,6 +122,10 @@ describe("Smart Search Function", () => {
     await kv.set("mem:obs:ses_1", "obs_1", obs1);
     await kv.set("mem:obs:ses_1", "obs_2", obs2);
 
+    getSearchIndex().clear();
+    getSearchIndex().add(obs1);
+    getSearchIndex().add(obs2);
+
     const searchFn = async (_query: string, _limit: number) => searchResults;
     registerSmartSearchFunction(sdk as never, kv as never, searchFn);
   });
@@ -162,10 +178,16 @@ describe("Smart Search Function", () => {
   it("expand returns empty for nonexistent observation IDs", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       expandIds: ["obs_nonexistent_ses_xxx"],
-    })) as { mode: string; results: unknown[] };
+    })) as {
+      mode: string;
+      results: unknown[];
+      lookup: { missing: number };
+    };
 
     expect(result.mode).toBe("expanded");
     expect(result.results.length).toBe(0);
+    expect(result.lookup.missing).toBe(1);
+    expect(kv.listCalls).not.toContain(KV.sessions);
   });
 
   it("compact mode records access for every returned observation id (#119)", async () => {
@@ -289,6 +311,157 @@ describe("Smart Search Function", () => {
 
       expect(result.results.length).toBe(2);
       expect(result.lessons).toEqual([]);
+    });
+  });
+
+  describe("expand lookup", () => {
+    const ORIG_ID = process.env["AGENT_ID"];
+    const ORIG_MODE = process.env["AGENTMEMORY_AGENT_SCOPE"];
+
+    afterEach(() => {
+      if (ORIG_ID === undefined) delete process.env["AGENT_ID"];
+      else process.env["AGENT_ID"] = ORIG_ID;
+      if (ORIG_MODE === undefined) delete process.env["AGENTMEMORY_AGENT_SCOPE"];
+      else process.env["AGENTMEMORY_AGENT_SCOPE"] = ORIG_MODE;
+    });
+
+    it("expands an observation whose session row is gone using the BM25 session map", async () => {
+      const orphan = makeObs({
+        id: "obs_orphan",
+        sessionId: "ses_evicted",
+        title: "Assistant response",
+        type: "conversation",
+        narrative: "Green Glade Games studio name is greenglade.games",
+      });
+      await kv.set(KV.observations("ses_evicted"), orphan.id, orphan);
+      getSearchIndex().add(orphan);
+
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: ["obs_orphan"],
+      })) as {
+        results: Array<{ obsId: string; observation: CompressedObservation }>;
+        lookup: { foundByIndex: number; missing: number };
+      };
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].observation.narrative).toContain("greenglade.games");
+      expect(result.lookup.foundByIndex).toBe(1);
+      expect(kv.listCalls).not.toContain(KV.sessions);
+    });
+
+    it("expands a remembered memory that lives outside KV.observations", async () => {
+      const memory: Memory = {
+        id: "mem_ggg",
+        createdAt: "2026-07-31T08:43:00.001Z",
+        updatedAt: "2026-07-31T08:43:00.001Z",
+        type: "fact",
+        title: "Studio domain",
+        content: "Green Glade Games uses greenglade.games",
+        concepts: ["green-glade"],
+        files: [],
+        sessionIds: ["ses_1"],
+        strength: 8,
+        version: 1,
+        isLatest: true,
+      };
+      await kv.set(KV.memories, memory.id, memory);
+      getSearchIndex().add(memoryToObservation(memory));
+
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: ["mem_ggg"],
+      })) as {
+        results: Array<{ observation: CompressedObservation }>;
+        lookup: { foundByMemory: number };
+      };
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].observation.narrative).toContain("greenglade.games");
+      expect(result.lookup.foundByMemory).toBe(1);
+      expect(kv.listCalls).not.toContain(KV.sessions);
+    });
+
+    it("uses an explicit session hint without listing sessions", async () => {
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: [{ obsId: "obs_1", sessionId: "ses_1" }],
+      })) as {
+        results: Array<{ observation: CompressedObservation }>;
+        lookup: { foundByHint: number };
+      };
+
+      expect(result.results[0].observation.title).toBe("Auth handler");
+      expect(result.lookup.foundByHint).toBe(1);
+      expect(kv.listCalls).not.toContain(KV.sessions);
+    });
+
+    it("heals a stale index entry and reports staleIndex", async () => {
+      const ghost = makeObs({
+        id: "obs_ghost",
+        sessionId: "ses_gone",
+        title: "Deleted observation",
+        narrative: "should not expand",
+      });
+      getSearchIndex().add(ghost);
+      expect(getSearchIndex().has("obs_ghost")).toBe(true);
+
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: ["obs_ghost"],
+      })) as {
+        results: unknown[];
+        lookup: { staleIndex: number; missing: number };
+      };
+
+      expect(result.results).toEqual([]);
+      expect(result.lookup.staleIndex).toBe(1);
+      expect(getSearchIndex().has("obs_ghost")).toBe(false);
+      expect(kv.listCalls).not.toContain(KV.sessions);
+    });
+
+    it("does not heal the index when a KV read errors", async () => {
+      kv.throwOnGet.add(`${KV.observations("ses_1")}:obs_1`);
+
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: ["obs_1"],
+      })) as {
+        results: unknown[];
+        lookup: { lookupErrors: number; staleIndex: number };
+      };
+
+      expect(result.results).toEqual([]);
+      expect(result.lookup.lookupErrors).toBe(1);
+      expect(result.lookup.staleIndex).toBe(0);
+      expect(getSearchIndex().has("obs_1")).toBe(true);
+    });
+
+    it("filters an in-scope miss as filteredOutOfScope, not missing", async () => {
+      const other = makeObs({
+        id: "obs_other_agent",
+        sessionId: "ses_1",
+        title: "Other agent note",
+        narrative: "belongs to cursor",
+        agentId: "cursor",
+      });
+      await kv.set(KV.observations("ses_1"), other.id, other);
+      getSearchIndex().add(other);
+      process.env["AGENT_ID"] = "chatgpt";
+      process.env["AGENTMEMORY_AGENT_SCOPE"] = "isolated";
+
+      const result = (await sdk.trigger("mem::smart-search", {
+        query: "unused",
+        expandIds: ["obs_other_agent"],
+      })) as {
+        results: unknown[];
+        lookup: { foundByIndex: number; filteredOutOfScope: number; missing: number };
+      };
+
+      expect(result.results).toEqual([]);
+      expect(result.lookup.foundByIndex).toBe(1);
+      expect(result.lookup.filteredOutOfScope).toBe(1);
+      expect(result.lookup.missing).toBe(0);
     });
   });
 });

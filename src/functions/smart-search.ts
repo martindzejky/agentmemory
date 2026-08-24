@@ -5,11 +5,18 @@ import type {
   CompressedObservation,
   HybridSearchResult,
   Lesson,
+  Memory,
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { memoryToObservation } from "../state/memory-utils.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { recordAccessBatch } from "./access-tracker.js";
+import {
+  getSearchIndex,
+  scheduleIndexSave,
+  vectorIndexRemove,
+} from "./search.js";
 import {
   getAgentId,
   isAgentScopeIsolated,
@@ -147,18 +154,41 @@ export function registerSmartSearchFunction(
 
         const results = await Promise.all(
           items.map(({ obsId, sessionId }) =>
-            findObservation(kv, obsId, sessionId).then((obs) =>
-              obs ? { obsId, sessionId: obs.sessionId, observation: obs } : null,
-            ),
+            findObservation(kv, obsId, sessionId).then((found) => ({
+              obsId,
+              ...found,
+            })),
           ),
         );
+        const lookup = {
+          foundByHint: 0,
+          foundByIndex: 0,
+          foundByMemory: 0,
+          missing: 0,
+          staleIndex: 0,
+          lookupErrors: 0,
+          filteredOutOfScope: 0,
+        };
         for (const r of results) {
-          if (r) expanded.push(r);
+          if (r.source === "hint") lookup.foundByHint++;
+          else if (r.source === "index") lookup.foundByIndex++;
+          else if (r.source === "memory") lookup.foundByMemory++;
+          else if (r.source === "stale_index") lookup.staleIndex++;
+          else if (r.source === "error") lookup.lookupErrors++;
+          else lookup.missing++;
+          if (r.observation) {
+            expanded.push({
+              obsId: r.obsId,
+              sessionId: r.observation.sessionId,
+              observation: r.observation,
+            });
+          }
         }
 
         const scoped = filterAgentId
           ? expanded.filter((e) => e.observation.agentId === filterAgentId)
           : expanded;
+        lookup.filteredOutOfScope = expanded.length - scoped.length;
 
         void recordAccessBatch(
           kv,
@@ -170,10 +200,10 @@ export function registerSmartSearchFunction(
           requested: data.expandIds.length,
           attempted: raw.length,
           returned: scoped.length,
-          filteredOutOfScope: expanded.length - scoped.length,
+          ...lookup,
           truncated,
         });
-        return { mode: "expanded", results: scoped, truncated };
+        return { mode: "expanded", results: scoped, truncated, lookup };
       }
 
       if (!data.query || typeof data.query !== "string" || !data.query.trim()) {
@@ -359,28 +389,93 @@ async function detectFollowup(
   });
 }
 
+type ObservationLookupSource =
+  | "hint"
+  | "index"
+  | "memory"
+  | "missing"
+  | "stale_index"
+  | "error";
+
+interface ObservationLookup {
+  observation: CompressedObservation | null;
+  source: ObservationLookupSource;
+  sessionId?: string;
+}
+
+async function readKey<T>(
+  kv: StateKV,
+  scope: string,
+  key: string,
+): Promise<{ value: T | null; error: boolean }> {
+  try {
+    const value = await kv.get<T>(scope, key);
+    return { value: value ?? null, error: false };
+  } catch {
+    return { value: null, error: true };
+  }
+}
+
+// Resolve one observation the same way recall hydrates a hit: session-scoped
+// KV.observations, then KV.memories. The BM25 index already stores sessionId
+// per obsId (SearchIndex.sessionIdFor), which is how mem::search / hybrid
+// search load rows without enumerating KV.sessions.
+//
+// Do not fall back to kv.list(KV.sessions). That list is unpaginated, misses
+// evicted session rows whose observations still exist, and on a 1k-session
+// corpus takes about as long as the MCP gateway's 10s upstream timeout.
 async function findObservation(
   kv: StateKV,
   obsId: string,
   sessionIdHint?: string,
-): Promise<CompressedObservation | null> {
+): Promise<ObservationLookup> {
+  let sawReadError = false;
+
   if (sessionIdHint) {
-    const obs = await kv
-      .get<CompressedObservation>(KV.observations(sessionIdHint), obsId)
-      .catch(() => null);
-    if (obs) return obs;
+    const hinted = await readKey<CompressedObservation>(
+      kv,
+      KV.observations(sessionIdHint),
+      obsId,
+    );
+    if (hinted.error) sawReadError = true;
+    else if (hinted.value) {
+      return { observation: hinted.value, source: "hint", sessionId: hinted.value.sessionId };
+    }
   }
 
-  const sessions = await kv.list<{ id: string }>(KV.sessions);
-  for (let i = 0; i < sessions.length; i += 5) {
-    const batch = sessions.slice(i, i + 5);
-    const results = await Promise.all(
-      batch.map((s) =>
-        kv.get<CompressedObservation>(KV.observations(s.id), obsId).catch(() => null),
-      ),
+  const indexedSession = getSearchIndex().sessionIdFor(obsId);
+  if (indexedSession && indexedSession !== sessionIdHint) {
+    const indexed = await readKey<CompressedObservation>(
+      kv,
+      KV.observations(indexedSession),
+      obsId,
     );
-    const found = results.find((r) => r !== null);
-    if (found) return found;
+    if (indexed.error) sawReadError = true;
+    else if (indexed.value) {
+      return { observation: indexed.value, source: "index", sessionId: indexed.value.sessionId };
+    }
   }
-  return null;
+
+  const memory = await readKey<Memory>(kv, KV.memories, obsId);
+  if (memory.error) sawReadError = true;
+  else if (memory.value) {
+    return {
+      observation: memoryToObservation(memory.value),
+      source: "memory",
+      sessionId: memory.value.sessionIds?.[0] ?? "memory",
+    };
+  }
+
+  if (sawReadError) {
+    return { observation: null, source: "error", sessionId: sessionIdHint ?? indexedSession ?? undefined };
+  }
+
+  if (indexedSession) {
+    getSearchIndex().remove(obsId);
+    vectorIndexRemove(obsId);
+    scheduleIndexSave();
+    return { observation: null, source: "stale_index", sessionId: indexedSession };
+  }
+
+  return { observation: null, source: "missing", sessionId: sessionIdHint };
 }
