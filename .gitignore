@@ -29,6 +29,3 @@ integrations/hermes/__pycache__/
 eval/reports/
 # LongMemEval download is 278MB; fetched on demand
 eval/data/longmemeval/
-
-# local investigation scratch (see docs/investigations/)
-.tmp-repro/
