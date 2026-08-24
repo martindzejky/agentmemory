@@ -14,6 +14,9 @@ import {
   readGraphSnapshot,
   snapshotGraphTables,
 } from "./graph-snapshot.js";
+import { withKeyedLock } from "./keyed-mutex.js";
+
+const SEARCH_INDEX_LOCK = "gsearch:index";
 
 export const SEARCH_INDEX_META_KEY = "current";
 export const TOKEN_POSTING_CAP = 200;
@@ -214,8 +217,7 @@ async function upsertNodeInSearchIndex(
 ): Promise<void> {
   const tokens = tokenizeGraphName(node.name, node.aliases);
   const observationIds = [...new Set(node.sourceObservationIds)].slice(
-    0,
-    OBS_PER_NODE_CAP,
+    -OBS_PER_NODE_CAP,
   );
   const prev = await readNodeRecord(kv, resetAt, node.id);
   const prevTokens = new Set(prev?.tokens ?? []);
@@ -370,7 +372,7 @@ async function removeEdgeFromSearchIndex(
   ]);
 }
 
-export async function indexGraphDelta(
+async function indexGraphDeltaUnlocked(
   kv: StateKV,
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -390,6 +392,17 @@ export async function indexGraphDelta(
     }
     await upsertEdgeInSearchIndex(kv, edge, resetAt);
   }
+}
+
+export async function indexGraphDelta(
+  kv: StateKV,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  resetAt: string,
+): Promise<void> {
+  await withKeyedLock(SEARCH_INDEX_LOCK, () =>
+    indexGraphDeltaUnlocked(kv, nodes, edges, resetAt),
+  );
 }
 
 export async function stampSearchIndexMeta(
@@ -415,18 +428,28 @@ export async function ensureSearchIndex(kv: StateKV): Promise<string> {
     return meta.resetAt;
   }
 
-  const snap = await readGraphSnapshot(kv);
-  const resetAt = searchIndexNamespace(snap?.resetAt);
-  const tables = snapshotGraphTables(snap);
-  const nodes = tables.nodes.filter(
-    (n) => !isResetOrphan(snap, n.createdAt) && !n.stale,
-  );
-  const edges = tables.edges.filter(
-    (e) => !isResetOrphan(snap, e.createdAt) && !e.stale,
-  );
-  await indexGraphDelta(kv, nodes, edges, resetAt);
-  await stampSearchIndexMeta(kv, resetAt, nodes.length, edges.length);
-  return resetAt;
+  return withKeyedLock(SEARCH_INDEX_LOCK, async () => {
+    const again = await kv.get<GraphSearchIndexMeta>(
+      KV.graphSearchMeta,
+      SEARCH_INDEX_META_KEY,
+    );
+    if (again && typeof again.resetAt === "string") {
+      return again.resetAt;
+    }
+
+    const snap = await readGraphSnapshot(kv);
+    const resetAt = searchIndexNamespace(snap?.resetAt);
+    const tables = snapshotGraphTables(snap);
+    const nodes = tables.nodes.filter(
+      (n) => !isResetOrphan(snap, n.createdAt) && !n.stale,
+    );
+    const edges = tables.edges.filter(
+      (e) => !isResetOrphan(snap, e.createdAt) && !e.stale,
+    );
+    await indexGraphDeltaUnlocked(kv, nodes, edges, resetAt);
+    await stampSearchIndexMeta(kv, resetAt, nodes.length, edges.length);
+    return resetAt;
+  });
 }
 
 export async function lookupTokenNodeIds(

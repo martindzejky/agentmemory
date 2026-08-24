@@ -7,6 +7,7 @@ import {
   snapshotFromGraphTables,
 } from "../src/state/graph-snapshot.js";
 import {
+  OBS_PER_NODE_CAP,
   SEARCH_INDEX_META_KEY,
   ensureSearchIndex,
   searchNodeKey,
@@ -140,6 +141,70 @@ describe("write-path graph search indexes", () => {
     );
     expect(obs?.nodeIds).toEqual(expect.arrayContaining(["n1", "n2"]));
     expect(kv.listCalls).toEqual([]);
+  });
+
+  it("keeps the newest observation ids when a node exceeds the cap", async () => {
+    const oldest = Array.from({ length: OBS_PER_NODE_CAP }, (_, i) => `obs_old_${i}`);
+    const newest = ["obs_new_a", "obs_new_b"];
+    await persistGraphDelta(
+      kv as never,
+      [
+        node("n1", "Railway", [...oldest, ...newest]),
+        node("n2", "timeout", ["obs_timeout"]),
+      ],
+      [edge("e1", "n1", "n2")],
+      [],
+    );
+
+    const record = await kv.get<GraphSearchNodeIndex>(
+      KV.graphSearchNodes,
+      searchNodeKey("", "n1"),
+    );
+    expect(record?.observationIds).toHaveLength(OBS_PER_NODE_CAP);
+    expect(record?.observationIds).toEqual(expect.arrayContaining(newest));
+    expect(record?.observationIds).not.toContain("obs_old_0");
+
+    expect(
+      (await kv.get<GraphSearchObsPosting>(
+        KV.graphSearchObs,
+        searchObsKey("", "obs_old_0"),
+      ))?.nodeIds ?? [],
+    ).not.toContain("n1");
+    expect(
+      (await kv.get<GraphSearchObsPosting>(
+        KV.graphSearchObs,
+        searchObsKey("", "obs_new_b"),
+      ))?.nodeIds,
+    ).toContain("n1");
+
+    const retrieval = new GraphRetrieval(kv as never);
+    const fromNew = await retrieval.expandFromChunks(["obs_new_b"]);
+    expect(fromNew.map((r) => r.obsId)).toContain("obs_timeout");
+    const fromOld = await retrieval.expandFromChunks(["obs_old_0"]);
+    expect(fromOld).toEqual([]);
+  });
+
+  it("serializes concurrent index writes so a shared token keeps both nodes", async () => {
+    await Promise.all([
+      persistGraphDelta(
+        kv as never,
+        [node("n1", "Railway", ["obs_1"])],
+        [],
+        [],
+      ),
+      persistGraphDelta(
+        kv as never,
+        [node("n2", "Railway", ["obs_2"])],
+        [],
+        [],
+      ),
+    ]);
+
+    const posting = await kv.get<GraphSearchTokenPosting>(
+      KV.graphSearchTokens,
+      searchTokenKey("", "railway"),
+    );
+    expect(posting?.nodeIds).toEqual(expect.arrayContaining(["n1", "n2"]));
   });
 
   it("search uses indexes and never lists graph tables", async () => {
