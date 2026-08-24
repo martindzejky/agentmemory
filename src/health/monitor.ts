@@ -3,6 +3,12 @@ import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
+import { readContainerMemory } from "./container-memory.js";
+import { getSearchGateStats } from "../utils/semaphore.js";
+import { getEmbedQueueStats } from "../state/embed-queue.js";
+import { getDeadlineExceededCounts } from "../utils/deadline.js";
+import { getKvListStats } from "../state/kv-metrics.js";
+import { logger } from "../logger.js";
 
 export function registerHealthMonitor(
   sdk: ISdk,
@@ -11,6 +17,7 @@ export function registerHealthMonitor(
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
   let prevCpuTime = Date.now();
+  let lastLoggedStatus: HealthSnapshot["status"] = "healthy";
 
   if (typeof sdk.on === "function") {
     sdk.on("connection_state", (state?: unknown) => {
@@ -20,6 +27,9 @@ export function registerHealthMonitor(
 
   async function collectHealth(): Promise<HealthSnapshot> {
     const mem = process.memoryUsage();
+    const container = readContainerMemory();
+    const searchGate = getSearchGateStats();
+    const embed = getEmbedQueueStats();
     const currentCpu = process.cpuUsage();
     const now = Date.now();
     const uptime = process.uptime();
@@ -80,6 +90,16 @@ export function registerHealthMonitor(
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
+      ...(container ? { container } : {}),
+      load: {
+        searchInFlight: searchGate.inFlight,
+        searchQueued: searchGate.queued,
+        embedQueued: embed.queued,
+        embedInFlight: embed.inFlight,
+        embedDropped: embed.dropped,
+        deadlineExceeded: getDeadlineExceededCounts(),
+        widestKvLists: getKvListStats(),
+      },
       status: "healthy",
       alerts: [],
     };
@@ -88,6 +108,32 @@ export function registerHealthMonitor(
     snapshot.status = evaluated.status;
     snapshot.alerts = evaluated.alerts;
     snapshot.notes = evaluated.notes;
+
+    // The production OOM crashes left nothing in the log, because the snapshot
+    // was only ever written to KV. One line per transition (not per tick) is
+    // enough to reconstruct a death afterwards without adding log volume in
+    // steady state.
+    if (evaluated.status !== lastLoggedStatus) {
+      lastLoggedStatus = evaluated.status;
+      const line = {
+        status: evaluated.status,
+        alerts: evaluated.alerts,
+        rssMb: Math.round(mem.rss / (1024 * 1024)),
+        heapUsedMb: Math.round(mem.heapUsed / (1024 * 1024)),
+        containerMb: container
+          ? Math.round(container.usedBytes / (1024 * 1024))
+          : undefined,
+        containerLimitMb: container?.limitBytes
+          ? Math.round(container.limitBytes / (1024 * 1024))
+          : undefined,
+        eventLoopLagMs: Math.round(eventLoopLagMs),
+        searchInFlight: searchGate.inFlight,
+        searchQueued: searchGate.queued,
+        embedQueued: embed.queued,
+      };
+      if (evaluated.status === "healthy") logger.info("Health recovered", line);
+      else logger.warn("Health degraded", line);
+    }
 
     await kv.set(KV.health, "latest", snapshot).catch(() => {});
     return snapshot;

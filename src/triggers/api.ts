@@ -24,8 +24,10 @@ import {
   getAgentId,
   isAgentScopeIsolated,
   loadConfig,
+  isGraphSearchEnabled,
 } from "../config.js";
 import { normalizeRequestAgentId } from "../functions/ensure-session.js";
+import { getOperationStats } from "../utils/op-timing.js";
 
 type Response = {
   status_code: number;
@@ -276,6 +278,17 @@ export function registerApiTriggers(
           enableHow: "Set AGENTMEMORY_INJECT_CONTEXT=true and restart.",
           docsHref: "https://github.com/rohitg00/agentmemory/issues/143",
         },
+        {
+          key: "AGENTMEMORY_GRAPH_SEARCH",
+          label: "Graph stream in hybrid search",
+          enabled: isGraphSearchEnabled(),
+          default: false,
+          affects: ["Search", "Recall"],
+          needsLlm: false,
+          description: "Adds a knowledge-graph stream to search ranking. OFF because the current implementation enumerates the whole graph on every query (measured 60 MB and ~2s at 32K nodes) and its results are discarded downstream.",
+          enableHow: "Set AGENTMEMORY_GRAPH_SEARCH=true. Expect multi-second searches on a large graph.",
+          docsHref: "https://github.com/rohitg00/agentmemory/issues/937",
+        },
       ];
       return {
         status_code: 200,
@@ -317,6 +330,9 @@ export function registerApiTriggers(
           health: health || null,
           functionMetrics,
           circuitBreaker,
+          // Live in this process rather than from the 30s snapshot, so a
+          // /health poll during a slow phase shows the current picture.
+          operations: getOperationStats(),
           ...instanceInfo(),
         },
       };

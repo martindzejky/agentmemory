@@ -15,7 +15,11 @@ import {
   isDropStaleIndexEnabled,
   isIdleSweepEnabled,
   getIdleSweepIntervalMs,
+  isGraphSearchEnabled,
+  getSearchConcurrency,
 } from "./config.js";
+import { Semaphore, setSearchGate } from "./utils/semaphore.js";
+import { timedOp } from "./utils/op-timing.js";
 import {
   createProvider,
   createFallbackProvider,
@@ -107,7 +111,7 @@ import {
 } from "./health/engine-watchdog.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
-import { bootLog } from "./logger.js";
+import { bootLog, bootWarn } from "./logger.js";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -284,6 +288,15 @@ async function main() {
   bootLog(
     `Knowledge graph: structural extraction on (LLM relations ${isGraphExtractionEnabled() ? "enabled" : "off"})`,
   );
+  if (isGraphSearchEnabled()) {
+    // Loud, because it is the difference between millisecond and multi-second
+    // searches on a large graph, and the cost is not obvious from the flag name.
+    bootWarn(
+      "AGENTMEMORY_GRAPH_SEARCH=true: every search enumerates the full graph " +
+        "(all nodes + all edges, twice per query). Expect multi-second searches " +
+        "and high memory on a large graph.",
+    );
+  }
 
   registerConsolidationPipelineFunction(sdk, kv, provider);
   bootLog(`Consolidation pipeline: registered (CONSOLIDATION_ENABLED=${isConsolidationEnabled() ? "true" : "false"})`);
@@ -393,8 +406,20 @@ async function main() {
     graphWeight,
   );
 
+  // Retrieval allocates in proportion to the corpus, and hook traffic is fully
+  // concurrent (one subprocess per Cursor event, per agent, per subagent), so an
+  // unbounded burst multiplies peak memory until the container is killed.
+  // Queueing costs latency the client is already prepared to abandon.
+  const searchGate = new Semaphore(getSearchConcurrency());
+  setSearchGate(searchGate);
+  // Queue wait and execution are timed separately: "search is slow" and "search
+  // is queued behind other searches" need different fixes.
   const hybridRanker = (query: string, limit: number) =>
-    hybridSearch.search(query, limit);
+    timedOp("search.hybrid.total", () =>
+      searchGate.run(() =>
+        timedOp("search.hybrid.exec", () => hybridSearch.search(query, limit)),
+      ),
+    );
   registerSmartSearchFunction(sdk, kv, hybridRanker);
   setHybridRanker(hybridRanker);
   registerRecentSearchesSweepFunction(sdk, kv);
