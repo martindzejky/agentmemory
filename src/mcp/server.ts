@@ -380,9 +380,9 @@ export function registerMcpEndpoints(
                 payload: {},
               });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -414,9 +414,9 @@ export function registerMcpEndpoints(
                 payload,
               });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -433,9 +433,9 @@ export function registerMcpEndpoints(
                 tier: args.tier as string,
               } });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -462,9 +462,9 @@ export function registerMcpEndpoints(
                 itemType: args.itemType,
               } });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -481,9 +481,9 @@ export function registerMcpEndpoints(
                 limit: typeof args.limit === "number" ? args.limit : 20,
               } });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -529,9 +529,9 @@ export function registerMcpEndpoints(
                 reason: args.reason as string,
               } });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
@@ -546,9 +546,9 @@ export function registerMcpEndpoints(
                 message: args.message as string,
               } });
               return {
-              status_code: 200,
-              body: mcpToolResult(result),
-            };
+                status_code: 200,
+                body: mcpToolResult(result),
+              };
             } catch {
               return {
                 status_code: 200,
