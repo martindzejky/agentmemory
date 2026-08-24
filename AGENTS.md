@@ -13,6 +13,14 @@ agentmemory is a persistent memory system for AI coding agents, built on iii-eng
 - **Build**: TypeScript → ESM via tsdown, output to `dist/`
 - **Test**: vitest (`npm test` excludes integration tests)
 
+## Performance constraints
+
+`state::list` has no pagination: the engine materialises the whole scope as one JSON array and ships it over the WebSocket. Never call `kv.list` on an unbounded scope from a request path. `KV.graphNodes` / `KV.graphEdges` are the worst offenders (32K / 61K rows in one production deployment, 60.8 MB of JSON, ~2.1s, and ~570 MB of iii-engine RSS that is never released per call), which is why the graph stream in hybrid search is behind `AGENTMEMORY_GRAPH_SEARCH` and off by default. Full context: `docs/investigations/2026-08-24-latency-and-oom.md`.
+
+The worker is a single Node process sharing one event loop with every registered function, so one expensive handler delays unrelated endpoints — a graph enumeration made `/observe`, which performs no search at all, 30x slower.
+
+Hook endpoints (`/observe`, `/enrich`) sit behind a 2500 ms client abort that the server is never told about: iii's HTTP request carries no abort signal and the SDK protocol has no cancel message. Work started for a caller that has left runs to completion. Bound it with `Deadline` / the enrich budget, keep provider round-trips off the response path, and never hold a lock across one.
+
 ## Consistency Rules
 
 **When adding or removing MCP tools, you MUST update ALL of the following:**
