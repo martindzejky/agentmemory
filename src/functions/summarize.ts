@@ -21,6 +21,7 @@ import type { MetricsStore } from "../eval/metrics-store.js";
 import { safeAudit } from "./audit.js";
 import { ensureSession } from "./ensure-session.js";
 import { logger } from "../logger.js";
+import { withBackgroundLlmGate } from "../utils/semaphore.js";
 import {
   getCompressUpgradeGraceMs,
   getSummaryRebuildInterval,
@@ -299,13 +300,13 @@ export function registerSummarizeFunction(
   metricsStore?: MetricsStore,
 ): void {
   sdk.registerFunction("mem::summarize", 
-    async (data: {
+    (data: {
       sessionId: string;
       project?: string;
       cwd?: string;
       agentId?: string;
       summarizeAll?: boolean;
-    } | undefined) => {
+    } | undefined) => withBackgroundLlmGate(async () => {
       const startMs = Date.now();
       if (!data || typeof data.sessionId !== "string" || !data.sessionId.trim()) {
         return { success: false, error: "sessionId is required" };
@@ -595,6 +596,6 @@ export function registerSummarizeFunction(
         });
         return { success: false, error: msg };
       }
-    },
+    }),
   );
 }

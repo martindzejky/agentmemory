@@ -17,8 +17,9 @@ import {
   getIdleSweepIntervalMs,
   isGraphSearchEnabled,
   getSearchConcurrency,
+  getBackgroundLlmConcurrency,
 } from "./config.js";
-import { Semaphore, setSearchGate } from "./utils/semaphore.js";
+import { Semaphore, setSearchGate, setBackgroundLlmGate } from "./utils/semaphore.js";
 import { timedOp } from "./utils/op-timing.js";
 import {
   createProvider,
@@ -412,6 +413,8 @@ async function main() {
   // Queueing costs latency the client is already prepared to abandon.
   const searchGate = new Semaphore(getSearchConcurrency());
   setSearchGate(searchGate);
+  const backgroundLlmGate = new Semaphore(getBackgroundLlmConcurrency());
+  setBackgroundLlmGate(backgroundLlmGate);
   // Queue wait and execution are timed separately: "search is slow" and "search
   // is queued behind other searches" need different fixes.
   const hybridRanker = (query: string, limit: number) =>

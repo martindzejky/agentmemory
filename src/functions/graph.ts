@@ -23,6 +23,7 @@ import { logger } from "../logger.js";
 import { newestEventCursor, sortByEventCursor } from "./event-cursor.js";
 import { truncateAwaitingLlmUpgrade } from "./compress-upgrade-gate.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
+import { withBackgroundLlmGate } from "../utils/semaphore.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -750,11 +751,13 @@ export function registerGraphFunction(
           })),
         );
         try {
-          const response = await provider.compress(
-            GRAPH_EXTRACTION_SYSTEM,
-            prompt,
-          );
-          const parsed = parseGraphXml(response, obsIds);
+          const parsed = await withBackgroundLlmGate(async () => {
+            const response = await provider.compress(
+              GRAPH_EXTRACTION_SYSTEM,
+              prompt,
+            );
+            return parseGraphXml(response, obsIds);
+          });
           nodes = nodes.concat(parsed.nodes);
           edges = edges.concat(parsed.edges);
         } catch (err) {

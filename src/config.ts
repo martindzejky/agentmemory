@@ -524,6 +524,20 @@ export function getSearchConcurrency(): number {
   return raw > 0 ? raw : SEARCH_CONCURRENCY_DEFAULT;
 }
 
+// Concurrent background LLM jobs. mem::compress (4.5s avg) and mem::summarize
+// (6.9s avg) are dispatched with TriggerAction.Void from observe / session
+// stop, so a hook burst used to start one provider call per event with no
+// cap. Graph extraction's LLM pass sits on the same gate after a reset.
+const BACKGROUND_LLM_CONCURRENCY_DEFAULT = 2;
+
+export function getBackgroundLlmConcurrency(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY"],
+    BACKGROUND_LLM_CONCURRENCY_DEFAULT,
+  );
+  return raw > 0 ? raw : BACKGROUND_LLM_CONCURRENCY_DEFAULT;
+}
+
 export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
 }

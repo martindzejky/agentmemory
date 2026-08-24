@@ -275,6 +275,8 @@ export interface HealthSnapshot {
   load?: {
     searchInFlight: number;
     searchQueued: number;
+    backgroundLlmInFlight: number;
+    backgroundLlmQueued: number;
     embedQueued: number;
     embedInFlight: number;
     embedDropped: number;

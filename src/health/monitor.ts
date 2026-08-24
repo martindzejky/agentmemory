@@ -4,7 +4,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
 import { readContainerMemory } from "./container-memory.js";
-import { getSearchGateStats } from "../utils/semaphore.js";
+import { getSearchGateStats, getBackgroundLlmGateStats } from "../utils/semaphore.js";
 import { getEmbedQueueStats } from "../state/embed-queue.js";
 import { getDeadlineExceededCounts } from "../utils/deadline.js";
 import { getKvListStats } from "../state/kv-metrics.js";
@@ -29,6 +29,7 @@ export function registerHealthMonitor(
     const mem = process.memoryUsage();
     const container = readContainerMemory();
     const searchGate = getSearchGateStats();
+    const backgroundLlm = getBackgroundLlmGateStats();
     const embed = getEmbedQueueStats();
     const currentCpu = process.cpuUsage();
     const now = Date.now();
@@ -94,6 +95,8 @@ export function registerHealthMonitor(
       load: {
         searchInFlight: searchGate.inFlight,
         searchQueued: searchGate.queued,
+        backgroundLlmInFlight: backgroundLlm.inFlight,
+        backgroundLlmQueued: backgroundLlm.queued,
         embedQueued: embed.queued,
         embedInFlight: embed.inFlight,
         embedDropped: embed.dropped,
@@ -129,6 +132,8 @@ export function registerHealthMonitor(
         eventLoopLagMs: Math.round(eventLoopLagMs),
         searchInFlight: searchGate.inFlight,
         searchQueued: searchGate.queued,
+        backgroundLlmInFlight: backgroundLlm.inFlight,
+        backgroundLlmQueued: backgroundLlm.queued,
         embedQueued: embed.queued,
         // The widest enumeration seen so far, because "what was it reading when
         // it died" is the first question after an OOM.
