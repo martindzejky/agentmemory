@@ -463,6 +463,14 @@ list was being re-enumerated 129 times across 180 enrich calls. After the fix,
   in-flight KV round-trip. Upstream would have to add cancellation to the engine
   protocol for anything stronger.
 - **`mem::compress` averages 4456 ms** across 6,728 production calls and
-  `mem::summarize` 6909 ms. Both are off the request path, but neither has a
-  concurrency cap, so a burst of auto-compress work still competes for the same
-  event loop. Worth a bounded worker pool next.
+  `mem::summarize` 6909 ms. Both are off the request path. A shared
+  `AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY` gate (default 2) now queues
+  compress, summarize, and the graph-extract LLM pass; structural extraction
+  stays ungated.
+- **Production graph reset 2026-08-24.** `POST /agentmemory/graph/reset`
+  wrote an empty snapshot (`totalNodes: 0`, `totalEdges: 0`, `resetAt` stamped).
+  Observations were not touched. Legacy rows remain in `KV.graphNodes` /
+  `KV.graphEdges` as unreferenced orphans: snapshot-backed reads see empty,
+  but any `kv.list` of those scopes still materialises the old 32k/61k rows.
+  Do not run `snapshot-rebuild` on this corpus. A chunked vacuum is a later
+  follow-up; listing-to-delete is the primitive that OOMs.

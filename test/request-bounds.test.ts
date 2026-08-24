@@ -3,7 +3,15 @@
 // container-memory reading that makes the failure visible at all. See
 // docs/investigations/2026-08-24-latency-and-oom.md.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { Semaphore, setSearchGate, getSearchGateStats } from "../src/utils/semaphore.js";
+import {
+  Semaphore,
+  setSearchGate,
+  getSearchGateStats,
+  setBackgroundLlmGate,
+  getBackgroundLlmGateStats,
+  withBackgroundLlmGate,
+} from "../src/utils/semaphore.js";
+import { getBackgroundLlmConcurrency } from "../src/config.js";
 import {
   Deadline,
   withTimeout,
@@ -87,6 +95,48 @@ describe("Semaphore", () => {
     setSearchGate(gate);
     expect(getSearchGateStats()).toEqual({ inFlight: 0, queued: 0 });
     setSearchGate(null);
+  });
+});
+
+describe("background LLM gate", () => {
+  afterEach(() => {
+    setBackgroundLlmGate(null);
+    delete process.env["AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY"];
+  });
+
+  it("runs immediately when no gate is registered", async () => {
+    await expect(withBackgroundLlmGate(async () => "ok")).resolves.toBe("ok");
+    expect(getBackgroundLlmGateStats()).toEqual({ inFlight: 0, queued: 0 });
+  });
+
+  it("never runs more than the limit concurrently", async () => {
+    const gate = new Semaphore(1);
+    setBackgroundLlmGate(gate);
+    let running = 0;
+    let peak = 0;
+
+    await Promise.all(
+      Array.from({ length: 6 }, () =>
+        withBackgroundLlmGate(async () => {
+          running++;
+          peak = Math.max(peak, running);
+          await new Promise((r) => setTimeout(r, 5));
+          running--;
+        }),
+      ),
+    );
+
+    expect(peak).toBe(1);
+    expect(getBackgroundLlmGateStats()).toEqual({ inFlight: 0, queued: 0 });
+  });
+
+  it("defaults to two concurrent background LLM jobs", () => {
+    expect(getBackgroundLlmConcurrency()).toBe(2);
+  });
+
+  it("reads AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY", () => {
+    process.env["AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY"] = "3";
+    expect(getBackgroundLlmConcurrency()).toBe(3);
   });
 });
 

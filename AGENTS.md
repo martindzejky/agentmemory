@@ -21,6 +21,8 @@ The worker is a single Node process sharing one event loop with every registered
 
 Hook endpoints (`/observe`, `/enrich`) sit behind a 2500 ms client abort that the server is never told about: iii's HTTP request carries no abort signal and the SDK protocol has no cancel message. Work started for a caller that has left runs to completion. Bound it with `Deadline` / the enrich budget, keep provider round-trips off the response path, and never hold a lock across one.
 
+Background LLM jobs (`mem::compress`, `mem::summarize`, graph-extract's LLM pass) are dispatched with `TriggerAction.Void` from observe / session stop / idle sweep. They must go through `withBackgroundLlmGate` so a hook burst cannot start one unbounded provider call per event.
+
 ## Consistency Rules
 
 **When adding or removing MCP tools, you MUST update ALL of the following:**

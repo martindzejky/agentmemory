@@ -22,6 +22,7 @@ import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
+import { withBackgroundLlmGate } from "../utils/semaphore.js";
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -71,11 +72,11 @@ export function registerCompressFunction(
   metricsStore?: MetricsStore,
 ): void {
   sdk.registerFunction("mem::compress", 
-    async (data: {
+    (data: {
       observationId: string;
       sessionId: string;
       raw?: RawObservation;
-    }) => {
+    }) => withBackgroundLlmGate(async () => {
       const startMs = Date.now();
 
       try {
@@ -286,6 +287,6 @@ export function registerCompressFunction(
         });
         return { success: false, error: "compression_failed" };
       }
-    },
+    }),
   );
 }

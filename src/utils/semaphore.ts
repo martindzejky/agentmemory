@@ -60,3 +60,23 @@ export function getSearchGateStats(): { inFlight: number; queued: number } {
     queued: searchGate?.queued ?? 0,
   };
 }
+
+// Background LLM work (compress, summarize, graph-extract) is fire-and-forget
+// from the hook path, so a burst of observes becomes a burst of 4-7s provider
+// calls on the same event loop. The search gate does not cover them.
+let backgroundLlmGate: Semaphore | null = null;
+
+export function setBackgroundLlmGate(gate: Semaphore | null): void {
+  backgroundLlmGate = gate;
+}
+
+export function getBackgroundLlmGateStats(): { inFlight: number; queued: number } {
+  return {
+    inFlight: backgroundLlmGate?.inFlight ?? 0,
+    queued: backgroundLlmGate?.queued ?? 0,
+  };
+}
+
+export function withBackgroundLlmGate<T>(work: () => Promise<T>): Promise<T> {
+  return backgroundLlmGate ? backgroundLlmGate.run(work) : work();
+}
