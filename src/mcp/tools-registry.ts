@@ -147,7 +147,8 @@ export const CORE_TOOLS: McpToolInputDef[] = [
         query: { type: "string", description: "Search query" },
         expandIds: {
           type: "string",
-          description: "Comma-separated observation IDs to expand",
+          description:
+            "Comma-separated observation IDs from memory_recall or compact search. Session IDs are optional; the search index resolves them.",
         },
         limit: { type: "number", description: "Max results (default 10)" },
       },

@@ -41,6 +41,37 @@ function parseCsvList(value: unknown): string[] {
   return [];
 }
 
+function parseExpandIds(
+  value: unknown,
+): Array<string | { obsId: string; sessionId: string }> {
+  if (typeof value === "string") {
+    return parseCsvList(value);
+  }
+  if (!Array.isArray(value)) return [];
+  const items: Array<string | { obsId: string; sessionId: string }> = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const obsId = entry.trim();
+      if (obsId) items.push(obsId);
+      continue;
+    }
+    if (
+      entry &&
+      typeof entry === "object" &&
+      typeof (entry as { obsId?: unknown }).obsId === "string"
+    ) {
+      const obsId = (entry as { obsId: string }).obsId.trim();
+      if (!obsId) continue;
+      const sessionId =
+        typeof (entry as { sessionId?: unknown }).sessionId === "string"
+          ? (entry as { sessionId: string }).sessionId.trim()
+          : "";
+      items.push(sessionId ? { obsId, sessionId } : obsId);
+    }
+  }
+  return items;
+}
+
 export function registerMcpEndpoints(
   sdk: ISdk,
   kv: StateKV,
@@ -264,7 +295,7 @@ export function registerMcpEndpoints(
                 body: { error: "query is required for memory_smart_search" },
               };
             }
-            const expandIds = parseCsvList(args.expandIds).slice(0, 20);
+            const expandIds = parseExpandIds(args.expandIds).slice(0, 20);
             const limit = Math.max(1, Math.min(100, asNumber(args.limit, 10) ?? 10));
             const result = await sdk.trigger({
               function_id: "mem::smart-search",
