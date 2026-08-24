@@ -5,6 +5,10 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerMeshFunction } from "../src/functions/mesh.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+} from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 import type {
   MeshPeer,
   Memory,
@@ -14,6 +18,7 @@ import type {
   MemoryRelation,
   GraphNode,
   GraphEdge,
+  GraphSnapshot,
 } from "../src/types.js";
 
 function mockKV() {
@@ -634,6 +639,44 @@ describe("Mesh Functions", () => {
       expect(result.accepted).toBe(1);
       const stored = await kv.get<GraphNode>("mem:graph:nodes", "gn_1");
       expect(stored!.name).toBe("typescript");
+      const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+      expect(snap?.topNodes.some((n) => n.id === "gn_1")).toBe(true);
+    });
+
+    it("does not resurrect pre-reset graph rows into the snapshot", async () => {
+      const orphan: GraphNode = {
+        id: "gn_orphan",
+        type: "concept",
+        name: "old",
+        properties: {},
+        sourceObservationIds: ["obs_old"],
+        createdAt: "2026-08-01T00:00:00Z",
+      };
+      await kv.set(KV.graphNodes, orphan.id, orphan);
+      await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, {
+        version: 1,
+        topNodes: [],
+        topEdges: [],
+        topDegrees: {},
+        stats: {
+          totalNodes: 0,
+          totalEdges: 0,
+          nodesByType: {},
+          edgesByType: {},
+        },
+        updatedAt: "2026-08-24T00:00:00Z",
+        dirty: false,
+        resetAt: "2026-08-24T00:00:00Z",
+      });
+
+      const result = (await sdk.trigger("mem::mesh-receive", {
+        graphNodes: [orphan],
+      })) as { success: boolean; accepted: number };
+
+      expect(result.success).toBe(true);
+      const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+      expect(snap?.topNodes.some((n) => n.id === orphan.id)).toBe(false);
+      expect(snap?.stats.totalNodes).toBe(0);
     });
 
     it("accepts graph edges", async () => {

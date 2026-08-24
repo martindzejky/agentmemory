@@ -35,6 +35,7 @@ import { recordAudit } from "./audit.js";
 import { indexRecords } from "./search.js";
 import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 import {
   clearEventIdIndex,
   indexRawEventIfPresent,
@@ -122,9 +123,9 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         if (profile) profiles.push(profile);
       }
 
+      const { nodes: graphNodes, edges: graphEdges } = await loadSnapshotGraph(kv);
+
       const [
-        graphNodes,
-        graphEdges,
         semanticMemories,
         proceduralMemories,
         actions,
@@ -140,8 +141,6 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         checkpoints,
         accessLogs,
       ] = await Promise.all([
-        kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-        kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
         kv.list<SemanticMemory>(KV.semantic).catch(() => []),
         kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
         kv.list<Action>(KV.actions).catch(() => []),

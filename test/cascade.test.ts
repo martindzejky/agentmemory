@@ -5,7 +5,12 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerCascadeFunction } from "../src/functions/cascade.js";
-import type { Memory, GraphNode, GraphEdge } from "../src/types.js";
+import type { Memory, GraphNode, GraphEdge, GraphSnapshot } from "../src/types.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+  snapshotFromGraphTables,
+} from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 describe("Cascade Update Function", () => {
@@ -73,6 +78,11 @@ describe("Cascade Update Function", () => {
       createdAt: "2026-03-01T00:00:00Z",
     };
     await kv.set("mem:graph:nodes", "node_2", unrelatedNode);
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables([node, unrelatedNode], []),
+    );
 
     const result = (await sdk.trigger("mem::cascade-update", {
       supersededMemoryId: "mem_old",
@@ -86,6 +96,10 @@ describe("Cascade Update Function", () => {
 
     const unchanged = await kv.get<GraphNode>("mem:graph:nodes", "node_2");
     expect(unchanged!.stale).toBeUndefined();
+
+    const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+    expect(snap?.topNodes.some((n) => n.id === "node_1")).toBe(false);
+    expect(snap?.topNodes.some((n) => n.id === "node_2")).toBe(true);
   });
 
   it("flags graph edges referencing superseded observation IDs", async () => {
@@ -116,6 +130,11 @@ describe("Cascade Update Function", () => {
       createdAt: "2026-03-01T00:00:00Z",
     };
     await kv.set("mem:graph:edges", "edge_1", edge);
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables([], [edge]),
+    );
 
     const result = (await sdk.trigger("mem::cascade-update", {
       supersededMemoryId: "mem_old2",
@@ -214,6 +233,11 @@ describe("Cascade Update Function", () => {
       stale: true,
     };
     await kv.set("mem:graph:nodes", "node_stale", node);
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables([node], []),
+    );
 
     const result = (await sdk.trigger("mem::cascade-update", {
       supersededMemoryId: "mem_skip",

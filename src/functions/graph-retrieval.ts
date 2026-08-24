@@ -2,10 +2,10 @@ import type {
   GraphNode,
   GraphEdge,
 } from "../types.js";
-import { KV } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { getGraphSearchBudgetMs, getGraphSearchMaxSeeds } from "../config.js";
 import { recordDeadlineExceeded } from "../utils/deadline.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 
 export interface GraphRetrievalResult {
   obsId: string;
@@ -53,8 +53,7 @@ export class GraphRetrieval {
     maxDepth = 2,
     maxResults = 20,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(this.kv);
 
     const matchingNodes = allNodes.filter((n) => {
       const nameLower = n.name.toLowerCase();
@@ -148,8 +147,7 @@ export class GraphRetrieval {
     maxDepth = 1,
     maxResults = 10,
   ): Promise<GraphRetrievalResult[]> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(this.kv);
 
     const linkedNodes = allNodes
       .filter((n) => n.sourceObservationIds.some((id) => obsIds.includes(id)))
@@ -199,8 +197,7 @@ export class GraphRetrieval {
     currentState: GraphEdge[];
     history: GraphEdge[];
   }> {
-    const allNodes = (await this.kv.list<GraphNode>(KV.graphNodes)).filter((n) => !n.stale);
-    const allEdges = (await this.kv.list<GraphEdge>(KV.graphEdges)).filter((e) => !e.stale);
+    const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(this.kv);
 
     const entity = allNodes.find(
       (n) => n.name.toLowerCase() === entityName.toLowerCase(),

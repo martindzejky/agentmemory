@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import type { GraphNode, GraphEdge, MemoryProvider } from "../src/types.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+  snapshotFromGraphTables,
+} from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -19,6 +24,10 @@ function mockKV(
   store.set("mem:graph:edges", edgesMap);
 
   store.set("mem:graph:edge-history", new Map());
+
+  const snapMap = new Map<string, unknown>();
+  snapMap.set(GRAPH_SNAPSHOT_KEY, snapshotFromGraphTables(nodes, edges));
+  store.set(KV.graphSnapshot, snapMap);
 
   return {
     get: async <T>(scope: string, key: string): Promise<T | null> => {
@@ -132,6 +141,11 @@ describe("TemporalGraph", () => {
 
     const storedEdges = await kv.list<GraphEdge>("mem:graph:edges");
     expect(storedEdges.length).toBe(1);
+    const snap = await kv.get<{ topEdges: GraphEdge[] }>(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+    );
+    expect(snap?.topEdges.length).toBe(1);
     expect(storedEdges[0].tcommit).toBeDefined();
     expect(storedEdges[0].tvalid).toBe("2024-01-01");
     expect(storedEdges[0].context?.reasoning).toBe(

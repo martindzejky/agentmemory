@@ -569,6 +569,8 @@ export interface GraphSnapshot {
   // silently reconnect to legacy rows via stale name-index entries.
   // Absent / 1970 epoch = no reset has run.
   resetAt?: string;
+  countedNodeIds?: Record<string, true>;
+  countedEdgeIds?: Record<string, true>;
 }
 
 export type ConsolidationTier =

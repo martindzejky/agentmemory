@@ -14,6 +14,10 @@ import { SearchIndex } from "../src/state/search-index.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
 import { KV } from "../src/state/schema.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+  snapshotFromGraphTables,
+} from "../src/state/graph-snapshot.js";
 import type {
   CompressedObservation,
   EmbeddingProvider,
@@ -112,6 +116,14 @@ describe("graph stream is off unless explicitly enabled", () => {
     await kv.set(KV.observations(obs.sessionId), obs.id, obs);
     await kv.set(KV.graphNodes, "n1", graphNode("n1", "railway", [obs.id]));
     await kv.set(KV.graphEdges, "e1", graphEdge("e1", "n1", "n1"));
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables(
+        [graphNode("n1", "railway", [obs.id])],
+        [graphEdge("e1", "n1", "n1")],
+      ),
+    );
     kv.listCalls.length = 0;
   });
 
@@ -129,14 +141,14 @@ describe("graph stream is off unless explicitly enabled", () => {
     expect(kv.listCalls).not.toContain(KV.graphEdges);
   });
 
-  it("enumerates the graph tables when the flag is set", async () => {
+  it("still does not enumerate the graph tables when the flag is set", async () => {
     process.env["AGENTMEMORY_GRAPH_SEARCH"] = "true";
     const hybrid = new HybridSearch(bm25, vector, embedder, kv as never);
 
     await hybrid.search('"railway" Railway', 5);
 
-    expect(kv.listCalls).toContain(KV.graphNodes);
-    expect(kv.listCalls).toContain(KV.graphEdges);
+    expect(kv.listCalls).not.toContain(KV.graphNodes);
+    expect(kv.listCalls).not.toContain(KV.graphEdges);
   });
 
   it("resolves the sessionId graph retrieval leaves empty so hits can hydrate", async () => {
@@ -158,6 +170,17 @@ describe("graph stream is off unless explicitly enabled", () => {
       "n2",
       graphNode("n2", "railway", ["obs_graph"]),
     );
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables(
+        [
+          graphNode("n1", "railway", ["obs_1"]),
+          graphNode("n2", "railway", ["obs_graph"]),
+        ],
+        [graphEdge("e1", "n1", "n1")],
+      ),
+    );
 
     const hybrid = new HybridSearch(bm25, vector, embedder, kv as never);
     const results = await hybrid.search('"railway"', 10);
@@ -178,42 +201,44 @@ describe("graph retrieval stays bounded when enabled", () => {
     delete process.env["AGENTMEMORY_GRAPH_SEARCH_BUDGET_MS"];
   });
 
-  it("enumerates each graph table exactly once per call regardless of seed count", async () => {
+  it("never enumerates graph tables even with many seeds", async () => {
     const kv = mockKV();
+    const nodes = [];
+    const edges = [];
     for (let i = 0; i < 40; i++) {
-      await kv.set(
-        KV.graphNodes,
-        `n${i}`,
-        graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]),
-      );
-      await kv.set(
-        KV.graphEdges,
-        `e${i}`,
-        graphEdge(`e${i}`, `n${i}`, `n${(i + 1) % 40}`),
-      );
+      nodes.push(graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]));
+      edges.push(graphEdge(`e${i}`, `n${i}`, `n${(i + 1) % 40}`));
+      await kv.set(KV.graphNodes, `n${i}`, nodes[i]);
+      await kv.set(KV.graphEdges, `e${i}`, edges[i]);
     }
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables(nodes, edges),
+    );
     kv.listCalls.length = 0;
 
     const retrieval = new GraphRetrieval(kv as never);
     await retrieval.searchByEntities(["railway"], 2, 20);
 
-    // Two lists total. Building adjacency per seed was O(seeds x edges) and
-    // measured 62s for a single call on the production graph.
-    expect(kv.listCalls.filter((s) => s === KV.graphNodes)).toHaveLength(1);
-    expect(kv.listCalls.filter((s) => s === KV.graphEdges)).toHaveLength(1);
+    expect(kv.listCalls.filter((s) => s === KV.graphNodes)).toHaveLength(0);
+    expect(kv.listCalls.filter((s) => s === KV.graphEdges)).toHaveLength(0);
   });
 
   it("honours the seed cap", async () => {
     process.env["AGENTMEMORY_GRAPH_SEARCH_MAX_SEEDS"] = "2";
     const kv = mockKV();
     // 10 matching nodes, each with its own distinct source observation.
+    const nodes = [];
     for (let i = 0; i < 10; i++) {
-      await kv.set(
-        KV.graphNodes,
-        `n${i}`,
-        graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]),
-      );
+      nodes.push(graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]));
+      await kv.set(KV.graphNodes, `n${i}`, nodes[i]);
     }
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables(nodes, []),
+    );
 
     const retrieval = new GraphRetrieval(kv as never);
     const results = await retrieval.searchByEntities(["railway"], 1, 100);
@@ -226,13 +251,16 @@ describe("graph retrieval stays bounded when enabled", () => {
   it("stops traversing once the budget is spent", async () => {
     process.env["AGENTMEMORY_GRAPH_SEARCH_BUDGET_MS"] = "1000";
     const kv = mockKV();
+    const nodes = [];
     for (let i = 0; i < 10; i++) {
-      await kv.set(
-        KV.graphNodes,
-        `n${i}`,
-        graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]),
-      );
+      nodes.push(graphNode(`n${i}`, `railway-${i}`, [`obs_${i}`]));
+      await kv.set(KV.graphNodes, `n${i}`, nodes[i]);
     }
+    await kv.set(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+      snapshotFromGraphTables(nodes, []),
+    );
 
     // An in-memory graph this small traverses inside a single millisecond, so
     // the clock is driven explicitly: each check advances 400ms against a

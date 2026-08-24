@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { GraphRetrieval } from "../src/functions/graph-retrieval.js";
 import type { GraphNode, GraphEdge } from "../src/types.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+  snapshotFromGraphTables,
+} from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 
 function mockKV(
   nodes: GraphNode[] = [],
@@ -14,6 +19,10 @@ function mockKV(
   const edgesMap = new Map<string, unknown>();
   for (const e of edges) edgesMap.set(e.id, e);
   store.set("mem:graph:edges", edgesMap);
+
+  const snapMap = new Map<string, unknown>();
+  snapMap.set(GRAPH_SNAPSHOT_KEY, snapshotFromGraphTables(nodes, edges));
+  store.set(KV.graphSnapshot, snapMap);
 
   return {
     get: async <T>(scope: string, key: string): Promise<T | null> => {

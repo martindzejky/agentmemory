@@ -11,6 +11,7 @@ import type {
   MemoryProvider,
 } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { loadSnapshotGraph } from "../state/graph-snapshot.js";
 import { REFLECT_SYSTEM, buildReflectPrompt } from "../prompts/reflect.js";
 
 interface ConceptCluster {
@@ -171,10 +172,9 @@ export function registerReflectFunctions(
       const maxInsightsPerCluster = 5;
       const maxTotal = 50;
 
-      const [graphNodes, graphEdges, semanticMemories, lessons, crystals] =
+      const [{ nodes: graphNodes, edges: graphEdges }, semanticMemories, lessons, crystals] =
         await Promise.all([
-          kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-          kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
+          loadSnapshotGraph(kv),
           kv.list<SemanticMemory>(KV.semantic).catch(() => []),
           kv.list<Lesson>(KV.lessons).catch(() => []),
           kv.list<Crystal>(KV.crystals).catch(() => []),

@@ -1,12 +1,11 @@
 import type { ISdk, ApiRequest } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
+import { readGraphSnapshot } from "../state/graph-snapshot.js";
 import type {
   SessionSummary,
   Memory,
   Session,
-  GraphNode,
-  GraphEdge,
 } from "../types.js";
 import { getVisibleTools } from "./tools-registry.js";
 import { mcpToolError, mcpToolResult, mcpUnavailable } from "./tool-result.js";
@@ -1366,14 +1365,13 @@ export function registerMcpEndpoints(
 
         if (uri === "agentmemory://graph/stats") {
           try {
-            const nodes = await kv.list<GraphNode>(KV.graphNodes);
-            const edges = await kv.list<GraphEdge>(KV.graphEdges);
-            const nodesByType: Record<string, number> = {};
-            for (const n of nodes)
-              nodesByType[n.type] = (nodesByType[n.type] || 0) + 1;
-            const edgesByType: Record<string, number> = {};
-            for (const e of edges)
-              edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
+            const snap = await readGraphSnapshot(kv);
+            const stats = snap?.stats ?? {
+              totalNodes: 0,
+              totalEdges: 0,
+              nodesByType: {},
+              edgesByType: {},
+            };
             return {
               status_code: 200,
               body: {
@@ -1382,10 +1380,11 @@ export function registerMcpEndpoints(
                     uri,
                     mimeType: "application/json",
                     text: JSON.stringify({
-                      totalNodes: nodes.length,
-                      totalEdges: edges.length,
-                      nodesByType,
-                      edgesByType,
+                      totalNodes: stats.totalNodes,
+                      totalEdges: stats.totalEdges,
+                      nodesByType: stats.nodesByType,
+                      edgesByType: stats.edgesByType,
+                      fromSnapshot: !!snap,
                     }),
                   },
                 ],

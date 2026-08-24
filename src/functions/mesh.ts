@@ -15,6 +15,14 @@ import type {
 } from "../types.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import {
+  emptyGraphSnapshot,
+  isResetOrphan,
+  loadSnapshotGraph,
+  upsertSnapshotEdge,
+  upsertSnapshotNode,
+  writeGraphSnapshot,
+} from "../state/graph-snapshot.js";
 
 function isPrivateIP(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1" || ip === "0.0.0.0") return true;
@@ -107,6 +115,30 @@ async function lwwMergeList<T extends { id: string }>(
 
 function graphNodeTs(node: GraphNode): string {
   return node.updatedAt || node.createdAt;
+}
+
+async function persistGraphPayloadToSnapshot(
+  kv: StateKV,
+  data: Pick<MeshSyncPayload, "graphNodes" | "graphEdges">,
+): Promise<void> {
+  const incomingNodes = data.graphNodes ?? [];
+  const incomingEdges = data.graphEdges ?? [];
+  if (incomingNodes.length === 0 && incomingEdges.length === 0) return;
+  const { snapshot } = await loadSnapshotGraph(kv);
+  const snap = snapshot ?? emptyGraphSnapshot();
+  for (const node of incomingNodes) {
+    if (!node.id) continue;
+    const stored = await kv.get<GraphNode>(KV.graphNodes, node.id);
+    if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
+    upsertSnapshotNode(snap, stored);
+  }
+  for (const edge of incomingEdges) {
+    if (!edge.id) continue;
+    const stored = await kv.get<GraphEdge>(KV.graphEdges, edge.id);
+    if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
+    upsertSnapshotEdge(snap, stored);
+  }
+  await writeGraphSnapshot(kv, snap);
 }
 
 async function lwwMergeGraphNodes(
@@ -362,6 +394,7 @@ export function registerMeshFunction(
       }
       accepted += await lwwMergeGraphNodes(kv, data.graphNodes);
       accepted += await lwwMergeList(kv, KV.graphEdges, data.graphEdges, "mem:gedge", "createdAt");
+      await persistGraphPayloadToSnapshot(kv, data);
       await recordAudit(kv, "mesh_sync", "mem::mesh-receive", [], {
         action: "mesh.receive",
         accepted,
@@ -435,16 +468,19 @@ async function collectSyncData(
     result.relations = deltaFilter(all, sinceTime, "createdAt");
   }
 
-  if (scopes.includes("graph:nodes") && !projectScoped) {
-    const all = await kv.list<GraphNode>(KV.graphNodes);
-    result.graphNodes = all.filter(
-      (n) => new Date(graphNodeTs(n)).getTime() > sinceTime,
-    );
-  }
-
-  if (scopes.includes("graph:edges") && !projectScoped) {
-    const all = await kv.list<GraphEdge>(KV.graphEdges);
-    result.graphEdges = deltaFilter(all, sinceTime, "createdAt");
+  if (
+    (scopes.includes("graph:nodes") || scopes.includes("graph:edges")) &&
+    !projectScoped
+  ) {
+    const { nodes, edges } = await loadSnapshotGraph(kv);
+    if (scopes.includes("graph:nodes")) {
+      result.graphNodes = nodes.filter(
+        (n) => new Date(graphNodeTs(n)).getTime() > sinceTime,
+      );
+    }
+    if (scopes.includes("graph:edges")) {
+      result.graphEdges = deltaFilter(edges, sinceTime, "createdAt");
+    }
   }
 
   return result;
@@ -489,6 +525,9 @@ async function applySyncData(
   }
   if (scopes.includes("graph:edges")) {
     applied += await lwwMergeList(kv, KV.graphEdges, data.graphEdges, "mem:gedge", "createdAt");
+  }
+  if (scopes.includes("graph:nodes") || scopes.includes("graph:edges")) {
+    await persistGraphPayloadToSnapshot(kv, data);
   }
 
   return applied;
