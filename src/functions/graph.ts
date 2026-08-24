@@ -763,10 +763,47 @@ export function registerGraphFunction(
         }
       }
 
+      // Advancing the cursor is progress even when a batch yields nothing.
+      // Heuristic extraction only builds nodes from obs.files and obs.concepts,
+      // and synthetic compression leaves concepts empty, so zero results is the
+      // common case rather than the exception. Returning early without stamping
+      // meant every session stop re-listed and re-extracted the same
+      // ever-growing batch, which is how the graph reached 32K nodes / 61K edges.
+      // An LLM failure is not progress: leave the cursor alone so the batch is
+      // retried.
+      const stampWatermark = async (): Promise<void> => {
+        if (!sessionId) return;
+        try {
+          const watermark = newestEventCursor(eligible);
+          if (!watermark) return;
+          const sid = sessionId;
+          await withKeyedLock(`session:${sid}`, async () => {
+            await kv.update(KV.sessions, sid, [
+              {
+                type: "set",
+                path: "lastGraphExtractedEventId",
+                value: watermark.id,
+              },
+              {
+                type: "set",
+                path: "lastGraphExtractedEventAt",
+                value: watermark.timestamp,
+              },
+            ]);
+          });
+        } catch (stampErr) {
+          logger.warn("graph-extract watermark stamp failed", {
+            sessionId: data.sessionId,
+            error:
+              stampErr instanceof Error ? stampErr.message : String(stampErr),
+          });
+        }
+      };
+
       if (nodes.length === 0 && edges.length === 0) {
-        return llmError
-          ? { success: false, error: llmError }
-          : { success: true, nodesAdded: 0, edgesAdded: 0 };
+        if (llmError) return { success: false, error: llmError };
+        await stampWatermark();
+        return { success: true, nodesAdded: 0, edgesAdded: 0 };
       }
 
       try {
@@ -790,34 +827,7 @@ export function registerGraphFunction(
           llm: llmEnabled && !llmError,
         });
 
-        if (sessionId) {
-          try {
-            const watermark = newestEventCursor(eligible);
-            if (watermark) {
-              const sid = sessionId;
-              await withKeyedLock(`session:${sid}`, async () => {
-                await kv.update(KV.sessions, sid, [
-                  {
-                    type: "set",
-                    path: "lastGraphExtractedEventId",
-                    value: watermark.id,
-                  },
-                  {
-                    type: "set",
-                    path: "lastGraphExtractedEventAt",
-                    value: watermark.timestamp,
-                  },
-                ]);
-              });
-            }
-          } catch (stampErr) {
-            logger.warn("graph-extract watermark stamp failed", {
-              sessionId: data.sessionId,
-              error:
-                stampErr instanceof Error ? stampErr.message : String(stampErr),
-            });
-          }
-        }
+        await stampWatermark();
 
         return {
           success: true,

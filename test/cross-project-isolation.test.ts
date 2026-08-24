@@ -20,6 +20,8 @@ vi.mock("../src/functions/access-tracker.js", () => ({
 vi.mock("../src/config.js", () => ({
   getAgentId: () => undefined,
   isAgentScopeIsolated: () => false,
+  // Generous so the enrich budget never fires in these correctness tests.
+  getEnrichBudgetMs: () => 60_000,
 }));
 
 import { registerRememberFunction } from "../src/functions/remember.js";

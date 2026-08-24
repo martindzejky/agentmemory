@@ -262,6 +262,32 @@ export interface HealthSnapshot {
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  // Whole-container memory from the cgroup: worker plus the iii-engine child
+  // process plus everything else. This is the figure an OOM kill acts on;
+  // `memory` above only describes this Node process.
+  container?: {
+    usedBytes: number;
+    limitBytes: number | null;
+    percent: number | null;
+  };
+  // Saturation and abandoned-work signals, so a slow deployment can be told
+  // apart from a queued one without attaching a profiler.
+  load?: {
+    searchInFlight: number;
+    searchQueued: number;
+    embedQueued: number;
+    embedInFlight: number;
+    embedDropped: number;
+    deadlineExceeded: Record<string, number>;
+    widestKvLists: Array<{
+      scope: string;
+      calls: number;
+      maxRows: number;
+      avgRows: number;
+      maxMs: number;
+      avgMs: number;
+    }>;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
   notes?: string[];

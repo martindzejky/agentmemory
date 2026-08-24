@@ -51,6 +51,13 @@ export class SearchIndex {
     return this.entries.has(id);
   }
 
+  // Graph retrieval returns results without a sessionId, and hydration needs
+  // one to build the KV scope. Every indexed observation already carries its
+  // session here, so this resolves it for free instead of scanning KV.
+  sessionIdFor(obsId: string): string | null {
+    return this.entries.get(obsId)?.sessionId ?? null;
+  }
+
   remove(id: string): void {
     const entry = this.entries.get(id);
     if (!entry) return;

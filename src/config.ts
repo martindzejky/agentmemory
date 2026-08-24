@@ -381,6 +381,43 @@ export function getGraphBatchSize(): number {
   return safeParseInt(getMergedEnv()["GRAPH_EXTRACTION_BATCH_SIZE"], 10);
 }
 
+// Graph stream inside hybrid search. OFF by default in this fork because the
+// implementation is both unusable and ruinous: GraphRetrieval enumerates all of
+// KV.graphNodes + KV.graphEdges per call (twice per query), which at 32K nodes /
+// 61K edges measured 60.8 MB of JSON, ~2.1s of KV time, and +573 MB of
+// iii-engine RSS that is never released — and every result it returns is then
+// discarded downstream because it carries no sessionId (upstream #937). See
+// docs/investigations/2026-08-24-latency-and-oom.md.
+//
+// Enabling it is a deliberate opt-in that trades bounded latency for graph
+// recall. The bounded seed cap and traversal budget below limit the damage but
+// cannot avoid the enumeration; that needs an adjacency index on the write path.
+export function isGraphSearchEnabled(): boolean {
+  return getMergedEnv()["AGENTMEMORY_GRAPH_SEARCH"] === "true";
+}
+
+const GRAPH_SEARCH_MAX_SEEDS_DEFAULT = 25;
+const GRAPH_SEARCH_BUDGET_DEFAULT_MS = 1_500;
+
+// Seed nodes whose neighbourhoods get traversed. Cost is O(seeds x edges), so an
+// uncapped seed set on a broad entity match is what produced the measured 62s
+// single call.
+export function getGraphSearchMaxSeeds(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_GRAPH_SEARCH_MAX_SEEDS"],
+    GRAPH_SEARCH_MAX_SEEDS_DEFAULT,
+  );
+  return raw > 0 ? raw : GRAPH_SEARCH_MAX_SEEDS_DEFAULT;
+}
+
+export function getGraphSearchBudgetMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_GRAPH_SEARCH_BUDGET_MS"],
+    GRAPH_SEARCH_BUDGET_DEFAULT_MS,
+  );
+  return raw > 0 ? raw : GRAPH_SEARCH_BUDGET_DEFAULT_MS;
+}
+
 // window for the smart-search followup-rate diagnostic. A second
 // search arriving within this many seconds (with disjoint results)
 // counts as a "follow-up" — a directional signal that the first result
@@ -442,6 +479,49 @@ export function isAutoCompressEnabled(): boolean {
 // with AGENTMEMORY_INJECT_CONTEXT=true and get a loud startup warning.
 export function isContextInjectionEnabled(): boolean {
   return getMergedEnv()["AGENTMEMORY_INJECT_CONTEXT"] === "true";
+}
+
+// Wall-clock budget for a single /enrich. Hook clients abort at 2.5s and the
+// server has no way to learn about it (iii's HTTP request carries no abort
+// signal), so the budget is what stops enrich from working for a caller that
+// left. Branches that miss the budget are dropped from the assembled context;
+// enrich is best-effort by design.
+const ENRICH_BUDGET_DEFAULT_MS = 1_200;
+
+export function getEnrichBudgetMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_ENRICH_BUDGET_MS"],
+    ENRICH_BUDGET_DEFAULT_MS,
+  );
+  return raw > 0 ? raw : ENRICH_BUDGET_DEFAULT_MS;
+}
+
+// Per-operation ceiling for state RPCs. iii-sdk's invocation timeout is 180s
+// (src/index.ts), which means a single pathological kv.list can hold a request
+// open for three minutes. Upstream #1128.
+const KV_TIMEOUT_DEFAULT_MS = 15_000;
+
+export function getKvTimeoutMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_KV_TIMEOUT_MS"],
+    KV_TIMEOUT_DEFAULT_MS,
+  );
+  return raw > 0 ? raw : KV_TIMEOUT_DEFAULT_MS;
+}
+
+// Concurrent expensive retrieval operations. Hook traffic is fully concurrent
+// (one subprocess per Cursor event, per agent, per subagent) and each search
+// allocates in proportion to the corpus, so an unbounded burst multiplies peak
+// memory. Queueing is strictly better than OOM: the client's own timeout is the
+// backstop.
+const SEARCH_CONCURRENCY_DEFAULT = 4;
+
+export function getSearchConcurrency(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_SEARCH_CONCURRENCY"],
+    SEARCH_CONCURRENCY_DEFAULT,
+  );
+  return raw > 0 ? raw : SEARCH_CONCURRENCY_DEFAULT;
 }
 
 export function getConsolidationDecayDays(): number {

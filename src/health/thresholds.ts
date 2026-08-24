@@ -8,6 +8,8 @@ interface ThresholdConfig {
   memoryWarnPercent: number;
   memoryCriticalPercent: number;
   memoryRssFloorBytes: number;
+  containerWarnPercent: number;
+  containerCriticalPercent: number;
 }
 
 const DEFAULTS: ThresholdConfig = {
@@ -18,6 +20,10 @@ const DEFAULTS: ThresholdConfig = {
   memoryWarnPercent: 80,
   memoryCriticalPercent: 95,
   memoryRssFloorBytes: 512 * 1024 * 1024,
+  // Deliberately earlier than the heap thresholds: past ~75% of the container
+  // limit there is usually only one more concurrent burst of headroom left.
+  containerWarnPercent: 75,
+  containerCriticalPercent: 90,
 };
 
 export function evaluateHealth(
@@ -57,6 +63,28 @@ export function evaluateHealth(
   } else if (snapshot.cpu.percent > cfg.cpuWarnPercent) {
     alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
     degraded = true;
+  }
+
+  // Container memory is checked first and independently of the heap ratio: the
+  // container is what gets OOM-killed, and the heap can look fine while it is
+  // about to happen (the iii-engine child process is not in this process's heap
+  // at all). Before this existed, an OOM crash produced no log line and no
+  // alert.
+  const container = snapshot.container;
+  if (container?.percent != null) {
+    const usedMb = Math.round(container.usedBytes / (1024 * 1024));
+    const limitMb = Math.round((container.limitBytes ?? 0) / (1024 * 1024));
+    if (container.percent > cfg.containerCriticalPercent) {
+      alerts.push(
+        `container_memory_critical_${Math.round(container.percent)}%_${usedMb}mb_of_${limitMb}mb`,
+      );
+      critical = true;
+    } else if (container.percent > cfg.containerWarnPercent) {
+      alerts.push(
+        `container_memory_warn_${Math.round(container.percent)}%_${usedMb}mb_of_${limitMb}mb`,
+      );
+      degraded = true;
+    }
   }
 
   const memPercent =
