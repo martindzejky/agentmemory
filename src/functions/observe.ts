@@ -11,7 +11,8 @@ import { stripPrivateData } from "./privacy.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
-import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
+import { getSearchIndex } from "./search.js";
+import { enqueueVectorIndexAdd } from "../state/embed-queue.js";
 import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
 import { ensureSession, resolveCreateAgentId } from "./ensure-session.js";
@@ -351,12 +352,16 @@ export function registerObserveFunction(
         });
 
         getSearchIndex().add(synthetic);
-        await vectorIndexAddGuarded(
-          synthetic.id,
-          synthetic.sessionId,
-          synthetic.title + " " + (synthetic.narrative || ""),
-          { kind: "synthetic", logId: synthetic.id },
-        );
+        // Queued, not awaited: embedding is a provider round-trip and this runs
+        // inside the per-session lock, so awaiting it both blew the hook's 2.5s
+        // budget and serialised every later observe for the session behind a
+        // third party. The vector index is derived and rebuilt from KV at boot.
+        enqueueVectorIndexAdd({
+          id: synthetic.id,
+          sessionId: synthetic.sessionId,
+          text: synthetic.title + " " + (synthetic.narrative || ""),
+          kind: "synthetic",
+        });
         await sdk.trigger({
           function_id: "stream::set",
           payload: {

@@ -4,8 +4,36 @@ import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { ensureSession } from "./ensure-session.js";
 import { logger } from "../logger.js";
+import { getEnrichBudgetMs } from "../config.js";
+import { recordDeadlineExceeded } from "../utils/deadline.js";
+import { timedOp } from "../utils/op-timing.js";
 
 const MAX_CONTEXT_LENGTH = 4000;
+
+// Resolves to the branch's value if it lands inside the budget, otherwise to
+// the fallback. The underlying work is not cancellable (there is no cancel in
+// the iii protocol), so this bounds the response, not the work. Bounding the
+// work itself is what the deadline checks inside search and file-context do.
+async function settleWithin<T>(
+  promise: Promise<T>,
+  budgetMs: number,
+  label: string,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      recordDeadlineExceeded(label);
+      resolve(fallback);
+    }, budgetMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([promise, expiry]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function escapeXml(s: string): string {
   return s
@@ -55,15 +83,17 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
 
       const parts: string[] = [];
 
-      const fileContextPromise = sdk
-        .trigger<{ sessionId: string; files: string[] }, { context: string }>({
-          function_id: "mem::file-context",
-          payload: {
-            sessionId: data.sessionId,
-            files: data.files,
-          },
-        })
-        .catch(() => ({ context: "" }));
+      const fileContextPromise = timedOp("enrich.file-context", () =>
+        sdk
+          .trigger<{ sessionId: string; files: string[] }, { context: string }>({
+            function_id: "mem::file-context",
+            payload: {
+              sessionId: data.sessionId,
+              files: data.files,
+            },
+          })
+          .catch(() => ({ context: "" })),
+      );
 
       const searchQueries: string[] = [
         ...data.files.map((f) => f.split("/").pop() || f),
@@ -72,19 +102,21 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
 
       const searchPromise =
         searchQueries.length > 0
-          ? sdk
-              .trigger<
-                { query: string; limit: number; project?: string },
-                { results: Array<{ observation: { narrative: string } }> }
-              >({
-                function_id: "mem::search",
-                payload: {
-                  query: searchQueries.join(" "),
-                  limit: 5,
-                  ...(project !== undefined && { project }),
-                },
-              })
-              .catch(() => ({ results: [] }))
+          ? timedOp("enrich.search", () =>
+              sdk
+                .trigger<
+                  { query: string; limit: number; project?: string },
+                  { results: Array<{ observation: { narrative: string } }> }
+                >({
+                  function_id: "mem::search",
+                  payload: {
+                    query: searchQueries.join(" "),
+                    limit: 5,
+                    ...(project !== undefined && { project }),
+                  },
+                })
+                .catch(() => ({ results: [] })),
+            )
           : Promise.resolve({ results: [] });
 
       const bugMemoriesPromise = kv
@@ -109,10 +141,19 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
         )
         .catch(() => []);
 
+      // Enrich sits on a hook's critical path with a 2.5s client abort, and the
+      // server never learns about that abort (iii's HTTP request carries no
+      // signal). Without a budget a slow branch keeps working for a caller that
+      // already left, which is what turned hook bursts into an OOM. Whatever
+      // finished in time is used; the rest is dropped. Enrich is best-effort
+      // context, so partial context beats a timed-out request.
+      const budgetMs = getEnrichBudgetMs();
       const [fileContext, searchResult, bugMemories] = await Promise.all([
-        fileContextPromise,
-        searchPromise,
-        bugMemoriesPromise,
+        settleWithin(fileContextPromise, budgetMs, "enrich.file-context", {
+          context: "",
+        }),
+        settleWithin(searchPromise, budgetMs, "enrich.search", { results: [] }),
+        settleWithin(bugMemoriesPromise, budgetMs, "enrich.bug-memories", []),
       ]);
 
       if (fileContext.context) {

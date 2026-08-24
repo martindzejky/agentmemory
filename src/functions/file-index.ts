@@ -5,6 +5,8 @@ import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { getEnrichBudgetMs } from "../config.js";
+import { recordDeadlineExceeded } from "../utils/deadline.js";
 
 interface FileHistory {
   file: string;
@@ -58,13 +60,24 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         )
         .slice(0, 15);
 
+      // One full observation list per session, serially, for 15 sessions. With
+      // MAX_OBS_PER_SESSION=2000 that is up to 30,000 observations loaded per
+      // /enrich, on a path with a 2.5s client budget. Stop once the budget is
+      // spent and answer from the sessions already loaded: the most recent
+      // sessions are loaded first, so partial coverage is the useful part.
+      const budgetExpiresAt = Date.now() + getEnrichBudgetMs();
       const obsCache = new Map<string, CompressedObservation[]>();
       for (const session of otherSessions) {
+        if (Date.now() >= budgetExpiresAt) {
+          recordDeadlineExceeded("file-context.session-scan");
+          break;
+        }
         obsCache.set(
           session.id,
           await kv.list<CompressedObservation>(KV.observations(session.id)),
         );
       }
+      otherSessions = otherSessions.filter((s) => obsCache.has(s.id));
 
       for (const file of files) {
         const history: FileHistory = { file, observations: [] };
