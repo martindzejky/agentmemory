@@ -600,6 +600,8 @@ export async function persistGraphDelta(
         snap.topNodes[topIdx] = merged;
         snapMutated = true;
       }
+      snap.countedNodeIds ??= {};
+      snap.countedNodeIds[existing.id] = true;
     } else {
       await kv.set(KV.graphNodes, node.id, node);
       await kv.set(KV.graphNameIndex, indexKey, node.id);
@@ -607,6 +609,8 @@ export async function persistGraphDelta(
       snap.stats.totalNodes += 1;
       snap.stats.nodesByType[node.type] =
         (snap.stats.nodesByType[node.type] ?? 0) + 1;
+      snap.countedNodeIds ??= {};
+      snap.countedNodeIds[node.id] = true;
       newNodeCount += 1;
       if (snap.topNodes.length < SNAPSHOT_TOP_NODES) {
         // Degree 0 still beats an empty slot — sit at the tail
@@ -649,12 +653,16 @@ export async function persistGraphDelta(
         snap.topEdges[topIdx] = merged;
         snapMutated = true;
       }
+      snap.countedEdgeIds ??= {};
+      snap.countedEdgeIds[existing.id] = true;
     } else {
       await kv.set(KV.graphEdges, edge.id, edge);
       await kv.set(KV.graphEdgeKey, eKey, edge.id);
       snap.stats.totalEdges += 1;
       snap.stats.edgesByType[edge.type] =
         (snap.stats.edgesByType[edge.type] ?? 0) + 1;
+      snap.countedEdgeIds ??= {};
+      snap.countedEdgeIds[edge.id] = true;
       newEdgeCount += 1;
       await applyDegreeDelta(kv, snap, edge.sourceNodeId, +1);
       await applyDegreeDelta(kv, snap, edge.targetNodeId, +1);

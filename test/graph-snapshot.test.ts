@@ -4,6 +4,7 @@ import {
   SNAPSHOT_TOP_CAP,
   emptyGraphSnapshot,
   isResetOrphan,
+  removeSnapshotEdge,
   removeSnapshotNode,
   upsertSnapshotEdge,
   upsertSnapshotNode,
@@ -40,6 +41,9 @@ describe("graph snapshot helpers", () => {
     }
     expect(snap.topNodes).toHaveLength(SNAPSHOT_TOP_CAP);
     expect(snap.stats.totalNodes).toBe(SNAPSHOT_TOP_CAP + 3);
+    upsertSnapshotNode(snap, node("n0"));
+    upsertSnapshotNode(snap, node(`n${SNAPSHOT_TOP_CAP}`));
+    expect(snap.stats.totalNodes).toBe(SNAPSHOT_TOP_CAP + 3);
   });
 
   it("counts edges that miss the top-N display set", () => {
@@ -60,6 +64,8 @@ describe("graph snapshot helpers", () => {
     expect(snap.topNodes.some((n) => n.id === "n1")).toBe(false);
     expect(snap.topEdges).toHaveLength(0);
     expect(snap.stats.totalEdges).toBe(1);
+    removeSnapshotEdge(snap, "e1");
+    expect(snap.stats.totalEdges).toBe(0);
   });
 
   it("detects pre-resetAt orphans", () => {

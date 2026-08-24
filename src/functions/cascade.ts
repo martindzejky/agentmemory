@@ -31,6 +31,22 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
       if (obsIds.size > 0) {
         const now = new Date().toISOString();
         const { snapshot, nodes, edges } = await loadSnapshotGraph(kv);
+        for (const edge of edges) {
+          if (edge.stale) continue;
+          const overlap = (edge.sourceObservationIds ?? []).some((id) => obsIds.has(id));
+          if (overlap) {
+            edge.stale = true;
+            await kv.set(KV.graphEdges, edge.id, edge);
+            if (snapshot) removeSnapshotEdge(snapshot, edge.id);
+            await recordAudit(kv, "consolidate", "mem::cascade-update", [edge.id], {
+              resourceType: "GraphEdge",
+              change: "marked stale from superseded memory",
+              supersededMemoryId: data.supersededMemoryId,
+            });
+            flaggedEdges++;
+          }
+        }
+
         for (const node of nodes) {
           if (node.stale) continue;
           const overlap = (node.sourceObservationIds ?? []).some((id) => obsIds.has(id));
@@ -45,22 +61,6 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
               supersededMemoryId: data.supersededMemoryId,
             });
             flaggedNodes++;
-          }
-        }
-
-        for (const edge of edges) {
-          if (edge.stale) continue;
-          const overlap = (edge.sourceObservationIds ?? []).some((id) => obsIds.has(id));
-          if (overlap) {
-            edge.stale = true;
-            await kv.set(KV.graphEdges, edge.id, edge);
-            if (snapshot) removeSnapshotEdge(snapshot, edge.id);
-            await recordAudit(kv, "consolidate", "mem::cascade-update", [edge.id], {
-              resourceType: "GraphEdge",
-              change: "marked stale from superseded memory",
-              supersededMemoryId: data.supersededMemoryId,
-            });
-            flaggedEdges++;
           }
         }
 

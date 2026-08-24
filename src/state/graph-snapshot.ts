@@ -20,6 +20,8 @@ export function emptyGraphSnapshot(): GraphSnapshot {
     },
     updatedAt: new Date(0).toISOString(),
     dirty: true,
+    countedNodeIds: {},
+    countedEdgeIds: {},
   };
 }
 
@@ -59,6 +61,8 @@ export function snapshotFromGraphTables(
     },
     updatedAt: new Date().toISOString(),
     dirty: false,
+    countedNodeIds: Object.fromEntries(liveNodes.map((n) => [n.id, true as const])),
+    countedEdgeIds: Object.fromEntries(liveEdges.map((e) => [e.id, true as const])),
   };
 }
 
@@ -102,6 +106,16 @@ export function isResetOrphan(
   );
 }
 
+function countedNodes(snap: GraphSnapshot): Record<string, true> {
+  snap.countedNodeIds ??= {};
+  return snap.countedNodeIds;
+}
+
+function countedEdges(snap: GraphSnapshot): Record<string, true> {
+  snap.countedEdgeIds ??= {};
+  return snap.countedEdgeIds;
+}
+
 export function upsertSnapshotNode(
   snap: GraphSnapshot,
   node: GraphNode,
@@ -112,9 +126,12 @@ export function upsertSnapshotNode(
     return;
   }
   if (node.stale) return;
-  snap.stats.totalNodes += 1;
-  snap.stats.nodesByType[node.type] =
-    (snap.stats.nodesByType[node.type] ?? 0) + 1;
+  if (!countedNodes(snap)[node.id]) {
+    countedNodes(snap)[node.id] = true;
+    snap.stats.totalNodes += 1;
+    snap.stats.nodesByType[node.type] =
+      (snap.stats.nodesByType[node.type] ?? 0) + 1;
+  }
   if (snap.topNodes.length < SNAPSHOT_TOP_CAP) {
     snap.topNodes.push(node);
     snap.topDegrees[node.id] = snap.topDegrees[node.id] ?? 0;
@@ -131,9 +148,12 @@ export function upsertSnapshotEdge(
     return;
   }
   if (edge.stale) return;
-  snap.stats.totalEdges += 1;
-  snap.stats.edgesByType[edge.type] =
-    (snap.stats.edgesByType[edge.type] ?? 0) + 1;
+  if (!countedEdges(snap)[edge.id]) {
+    countedEdges(snap)[edge.id] = true;
+    snap.stats.totalEdges += 1;
+    snap.stats.edgesByType[edge.type] =
+      (snap.stats.edgesByType[edge.type] ?? 0) + 1;
+  }
   const topIds = new Set(snap.topNodes.map((n) => n.id));
   if (topIds.has(edge.sourceNodeId) && topIds.has(edge.targetNodeId)) {
     snap.topEdges.push(edge);
@@ -155,6 +175,7 @@ export function removeSnapshotNode(
       snap.stats.nodesByType[removed.type] - 1,
     );
   }
+  delete countedNodes(snap)[nodeId];
   snap.topEdges = snap.topEdges.filter(
     (e) => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId,
   );
@@ -165,15 +186,18 @@ export function removeSnapshotEdge(
   edgeId: string,
 ): void {
   const idx = snap.topEdges.findIndex((e) => e.id === edgeId);
-  if (idx === -1) return;
-  const [removed] = snap.topEdges.splice(idx, 1);
-  snap.stats.totalEdges = Math.max(0, snap.stats.totalEdges - 1);
-  if (removed?.type && snap.stats.edgesByType[removed.type]) {
-    snap.stats.edgesByType[removed.type] = Math.max(
-      0,
-      snap.stats.edgesByType[removed.type] - 1,
-    );
+  if (idx !== -1) {
+    const [removed] = snap.topEdges.splice(idx, 1);
+    if (removed?.type && snap.stats.edgesByType[removed.type]) {
+      snap.stats.edgesByType[removed.type] = Math.max(
+        0,
+        snap.stats.edgesByType[removed.type] - 1,
+      );
+    }
   }
+  if (!countedEdges(snap)[edgeId] && idx === -1) return;
+  delete countedEdges(snap)[edgeId];
+  snap.stats.totalEdges = Math.max(0, snap.stats.totalEdges - 1);
 }
 
 export function snapshotCapWarning(
