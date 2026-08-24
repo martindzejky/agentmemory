@@ -10,7 +10,14 @@ import type {
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
-import { loadSnapshotGraph } from "../state/graph-snapshot.js";
+import {
+  emptyGraphSnapshot,
+  loadSnapshotGraph,
+  removeSnapshotEdge,
+  upsertSnapshotEdge,
+  upsertSnapshotNode,
+  writeGraphSnapshot,
+} from "../state/graph-snapshot.js";
 
 const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal knowledge extraction engine. Given observations, extract entities AND their temporal relationships with full context metadata.
 
@@ -187,8 +194,12 @@ export function registerTemporalGraphFunctions(
         const obsIds = data.observations.map((o) => o.id);
         const { nodes, edges } = parseTemporalGraphXml(response, obsIds);
 
-        const { nodes: existingNodes, edges: existingEdges } =
-          await loadSnapshotGraph(kv);
+        const {
+          snapshot,
+          nodes: existingNodes,
+          edges: existingEdges,
+        } = await loadSnapshotGraph(kv);
+        const snap = snapshot ?? emptyGraphSnapshot();
 
         const idRemap = new Map<string, string>();
         for (const node of nodes) {
@@ -217,11 +228,13 @@ export function registerTemporalGraphFunctions(
             };
             if (merged.aliases.length === 0) delete (merged as any).aliases;
             await kv.set(KV.graphNodes, existing.id, merged);
+            upsertSnapshotNode(snap, merged);
             node.id = existing.id;
             idRemap.set(oldId, existing.id);
           } else {
             await kv.set(KV.graphNodes, node.id, node);
             existingNodes.push(node);
+            upsertSnapshotNode(snap, node);
           }
         }
 
@@ -250,13 +263,17 @@ export function registerTemporalGraphFunctions(
             await kv.set(KV.graphEdges, existingEdge.id, updatedOld);
 
             await kv.set(KV.graphEdgeHistory, existingEdge.id, updatedOld);
+            removeSnapshotEdge(snap, existingEdge.id);
 
             edge.version = (existingEdge.version || 1) + 1;
           }
 
           await kv.set(KV.graphEdges, edge.id, edge);
           existingEdges.push(edge);
+          upsertSnapshotEdge(snap, edge);
         }
+
+        await writeGraphSnapshot(kv, snap);
 
         logger.info("Temporal graph extraction complete", {
           nodes: nodes.length,

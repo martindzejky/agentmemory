@@ -165,6 +165,12 @@ describe("graph readers use the snapshot, not live tables", () => {
     expect(result.flagged.nodes).toBe(1);
     expect(kv.listCalls).not.toContain(KV.graphNodes);
     expect(kv.listCalls).not.toContain(KV.graphEdges);
+
+    const snap = await kv.get<{ topNodes: GraphNode[] }>(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+    );
+    expect(snap?.topNodes.some((n) => n.id === live.id)).toBe(false);
   });
 
   it("mem::reflect does not list orphan tables", async () => {

@@ -5,7 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerCascadeFunction } from "../src/functions/cascade.js";
-import type { Memory, GraphNode, GraphEdge } from "../src/types.js";
+import type { Memory, GraphNode, GraphEdge, GraphSnapshot } from "../src/types.js";
 import {
   GRAPH_SNAPSHOT_KEY,
   snapshotFromGraphTables,
@@ -96,6 +96,10 @@ describe("Cascade Update Function", () => {
 
     const unchanged = await kv.get<GraphNode>("mem:graph:nodes", "node_2");
     expect(unchanged!.stale).toBeUndefined();
+
+    const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+    expect(snap?.topNodes.some((n) => n.id === "node_1")).toBe(false);
+    expect(snap?.topNodes.some((n) => n.id === "node_2")).toBe(true);
   });
 
   it("flags graph edges referencing superseded observation IDs", async () => {

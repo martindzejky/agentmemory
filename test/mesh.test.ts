@@ -5,6 +5,10 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerMeshFunction } from "../src/functions/mesh.js";
+import {
+  GRAPH_SNAPSHOT_KEY,
+} from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 import type {
   MeshPeer,
   Memory,
@@ -14,6 +18,7 @@ import type {
   MemoryRelation,
   GraphNode,
   GraphEdge,
+  GraphSnapshot,
 } from "../src/types.js";
 
 function mockKV() {
@@ -634,6 +639,8 @@ describe("Mesh Functions", () => {
       expect(result.accepted).toBe(1);
       const stored = await kv.get<GraphNode>("mem:graph:nodes", "gn_1");
       expect(stored!.name).toBe("typescript");
+      const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+      expect(snap?.topNodes.some((n) => n.id === "gn_1")).toBe(true);
     });
 
     it("accepts graph edges", async () => {

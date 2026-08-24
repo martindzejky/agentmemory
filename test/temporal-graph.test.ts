@@ -141,6 +141,11 @@ describe("TemporalGraph", () => {
 
     const storedEdges = await kv.list<GraphEdge>("mem:graph:edges");
     expect(storedEdges.length).toBe(1);
+    const snap = await kv.get<{ topEdges: GraphEdge[] }>(
+      KV.graphSnapshot,
+      GRAPH_SNAPSHOT_KEY,
+    );
+    expect(snap?.topEdges.length).toBe(1);
     expect(storedEdges[0].tcommit).toBeDefined();
     expect(storedEdges[0].tvalid).toBe("2024-01-01");
     expect(storedEdges[0].context?.reasoning).toBe(

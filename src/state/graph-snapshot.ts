@@ -4,6 +4,7 @@ import type { StateKV } from "./kv.js";
 import { logger } from "../logger.js";
 
 export const GRAPH_SNAPSHOT_KEY = "current";
+export const SNAPSHOT_TOP_CAP = 500;
 
 export function emptyGraphSnapshot(): GraphSnapshot {
   return {
@@ -79,6 +80,95 @@ export async function loadSnapshotGraph(kv: StateKV): Promise<{
 }> {
   const snapshot = await readGraphSnapshot(kv);
   return { snapshot, ...snapshotGraphTables(snapshot) };
+}
+
+export async function writeGraphSnapshot(
+  kv: StateKV,
+  snap: GraphSnapshot,
+): Promise<void> {
+  snap.updatedAt = new Date().toISOString();
+  snap.dirty = false;
+  await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, snap);
+}
+
+export function upsertSnapshotNode(
+  snap: GraphSnapshot,
+  node: GraphNode,
+): void {
+  const idx = snap.topNodes.findIndex((n) => n.id === node.id);
+  if (idx !== -1) {
+    snap.topNodes[idx] = node;
+    return;
+  }
+  if (node.stale) return;
+  if (snap.topNodes.length < SNAPSHOT_TOP_CAP) {
+    snap.topNodes.push(node);
+    snap.topDegrees[node.id] = snap.topDegrees[node.id] ?? 0;
+    snap.stats.totalNodes += 1;
+    snap.stats.nodesByType[node.type] =
+      (snap.stats.nodesByType[node.type] ?? 0) + 1;
+  }
+}
+
+export function upsertSnapshotEdge(
+  snap: GraphSnapshot,
+  edge: GraphEdge,
+): void {
+  const idx = snap.topEdges.findIndex((e) => e.id === edge.id);
+  if (idx !== -1) {
+    snap.topEdges[idx] = edge;
+    return;
+  }
+  if (edge.stale) return;
+  const topIds = new Set(snap.topNodes.map((n) => n.id));
+  if (topIds.has(edge.sourceNodeId) && topIds.has(edge.targetNodeId)) {
+    snap.topEdges.push(edge);
+    snap.stats.totalEdges += 1;
+    snap.stats.edgesByType[edge.type] =
+      (snap.stats.edgesByType[edge.type] ?? 0) + 1;
+  }
+}
+
+export function removeSnapshotNode(
+  snap: GraphSnapshot,
+  nodeId: string,
+): void {
+  const idx = snap.topNodes.findIndex((n) => n.id === nodeId);
+  if (idx === -1) return;
+  const [removed] = snap.topNodes.splice(idx, 1);
+  delete snap.topDegrees[nodeId];
+  snap.stats.totalNodes = Math.max(0, snap.stats.totalNodes - 1);
+  if (removed?.type && snap.stats.nodesByType[removed.type]) {
+    snap.stats.nodesByType[removed.type] = Math.max(
+      0,
+      snap.stats.nodesByType[removed.type] - 1,
+    );
+  }
+  const kept: GraphEdge[] = [];
+  for (const edge of snap.topEdges) {
+    if (edge.sourceNodeId === nodeId || edge.targetNodeId === nodeId) {
+      snap.stats.totalEdges = Math.max(0, snap.stats.totalEdges - 1);
+      continue;
+    }
+    kept.push(edge);
+  }
+  snap.topEdges = kept;
+}
+
+export function removeSnapshotEdge(
+  snap: GraphSnapshot,
+  edgeId: string,
+): void {
+  const idx = snap.topEdges.findIndex((e) => e.id === edgeId);
+  if (idx === -1) return;
+  const [removed] = snap.topEdges.splice(idx, 1);
+  snap.stats.totalEdges = Math.max(0, snap.stats.totalEdges - 1);
+  if (removed?.type && snap.stats.edgesByType[removed.type]) {
+    snap.stats.edgesByType[removed.type] = Math.max(
+      0,
+      snap.stats.edgesByType[removed.type] - 1,
+    );
+  }
 }
 
 export function snapshotCapWarning(
