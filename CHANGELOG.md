@@ -4,6 +4,12 @@ All notable changes to agentmemory will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **MCP output schemas and structured results for every tool.** All 54 tools in `getVisibleTools()` now declare an `outputSchema` derived from the real `mem::` return shapes. Successful `POST /agentmemory/mcp/call` responses include `structuredContent` that validates against that schema, while the existing `content` text blocks stay in place for older clients. Feature-disabled catch paths return `{ status: "unavailable", message }` instead of a one-off plain-text shape; array results such as audit entries are wrapped as `{ entries }`.
+
 ## [0.9.29] — 2026-08-16
 
 Release wave in two parts. Recall quality: hybrid ranking reaches the primary recall path, lessons get a real index, every record learns where it came from, the knowledge graph populates keyless, and agent scoping threads through all save paths — plus connector parity for pi and Codex, a new DeepSeek Harness connector, current provider model defaults, and a viewer clarity pass. Foundation: the `.env` file now applies everywhere, imports become searchable, consolidation runs on session stop, twelve MCP-only agents get activated on connect, and every capture surface agrees on what "project" means. No breaking changes; read the upgrade notes for behavior changes you will notice.

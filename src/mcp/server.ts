@@ -9,6 +9,7 @@ import type {
   GraphEdge,
 } from "../types.js";
 import { getVisibleTools } from "./tools-registry.js";
+import { mcpToolError, mcpToolResult, mcpUnavailable } from "./tool-result.js";
 import { timingSafeCompare } from "../auth.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
 
@@ -138,11 +139,7 @@ export function registerMcpEndpoints(
                 : JSON.stringify(result, null, 2);
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text },
-                ],
-              },
+              body: mcpToolResult(result, { text }),
             };
           }
 
@@ -159,9 +156,7 @@ export function registerMcpEndpoints(
             });
             return {
               status_code: 200,
-              body: {
-                content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -201,9 +196,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [{ type: "text", text: JSON.stringify(result) }],
-              },
+              body: mcpToolResult(result, { pretty: false }),
             };
           }
 
@@ -228,18 +221,21 @@ export function registerMcpEndpoints(
               function_id: "mem::file-context",
               payload,
             });
+            const context =
+              result &&
+              typeof result === "object" &&
+              "context" in result &&
+              typeof (result as { context?: unknown }).context === "string"
+                ? (result as { context: string }).context
+                : "";
             return {
               status_code: 200,
-              body: {
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      (result as { context: string }).context ||
-                      "No history found.",
-                  },
-                ],
-              },
+              body: mcpToolResult(
+                typeof result === "object" && result !== null
+                  ? result
+                  : { context },
+                { text: context || "No history found." },
+              ),
             };
           }
 
@@ -249,11 +245,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -261,11 +253,7 @@ export function registerMcpEndpoints(
             const sessions = await kv.list(KV.sessions);
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify({ sessions }, null, 2) },
-                ],
-              },
+              body: mcpToolResult({ sessions }),
             };
           }
 
@@ -288,11 +276,7 @@ export function registerMcpEndpoints(
             });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -314,11 +298,7 @@ export function registerMcpEndpoints(
             });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -337,11 +317,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -358,11 +334,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -370,11 +342,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::export", payload: {} });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -396,11 +364,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              },
+              body: mcpToolResult(result),
             };
           }
 
@@ -416,24 +380,15 @@ export function registerMcpEndpoints(
                 payload: {},
               });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Claude bridge not enabled. Set CLAUDE_MEMORY_BRIDGE=true",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Claude bridge not enabled. Set CLAUDE_MEMORY_BRIDGE=true",
+                ),
               };
             }
           }
@@ -459,24 +414,15 @@ export function registerMcpEndpoints(
                 payload,
               });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Knowledge graph not enabled. Set GRAPH_EXTRACTION_ENABLED=true",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Knowledge graph not enabled. Set GRAPH_EXTRACTION_ENABLED=true",
+                ),
               };
             }
           }
@@ -487,24 +433,15 @@ export function registerMcpEndpoints(
                 tier: args.tier as string,
               } });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Consolidation not enabled. Set CONSOLIDATION_ENABLED=true",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Consolidation not enabled. Set CONSOLIDATION_ENABLED=true",
+                ),
               };
             }
           }
@@ -525,24 +462,15 @@ export function registerMcpEndpoints(
                 itemType: args.itemType,
               } });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Team memory not enabled. Set TEAM_ID and USER_ID",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Team memory not enabled. Set TEAM_ID and USER_ID",
+                ),
               };
             }
           }
@@ -553,24 +481,15 @@ export function registerMcpEndpoints(
                 limit: typeof args.limit === "number" ? args.limit : 20,
               } });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Team memory not enabled. Set TEAM_ID and USER_ID",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Team memory not enabled. Set TEAM_ID and USER_ID",
+                ),
               };
             }
           }
@@ -583,19 +502,12 @@ export function registerMcpEndpoints(
               } });
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
+                body: mcpToolResult(result, { wrapArrayAs: "entries" }),
               };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [{ type: "text", text: "Audit query failed" }],
-                  isError: true,
-                },
+                body: mcpToolError("Audit query failed"),
               };
             }
           }
@@ -617,20 +529,13 @@ export function registerMcpEndpoints(
                 reason: args.reason as string,
               } });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [{ type: "text", text: "Governance delete failed" }],
-                  isError: true,
-                },
+                body: mcpToolError("Governance delete failed"),
               };
             }
           }
@@ -641,24 +546,15 @@ export function registerMcpEndpoints(
                 message: args.message as string,
               } });
               return {
-                status_code: 200,
-                body: {
-                  content: [
-                    { type: "text", text: JSON.stringify(result, null, 2) },
-                  ],
-                },
-              };
+              status_code: 200,
+              body: mcpToolResult(result),
+            };
             } catch {
               return {
                 status_code: 200,
-                body: {
-                  content: [
-                    {
-                      type: "text",
-                      text: "Snapshots not enabled. Set SNAPSHOT_ENABLED=true",
-                    },
-                  ],
-                },
+                body: mcpUnavailable(
+                  "Snapshots not enabled. Set SNAPSHOT_ENABLED=true",
+                ),
               };
             }
           }
@@ -690,11 +586,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(actionResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(actionResult),
             };
           }
 
@@ -713,11 +605,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(updateResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(updateResult),
             };
           }
 
@@ -729,11 +617,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(frontierResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(frontierResult),
             };
           }
 
@@ -744,11 +628,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(nextResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(nextResult),
             };
           }
 
@@ -791,11 +671,7 @@ export function registerMcpEndpoints(
             }
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(leaseResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(leaseResult),
             };
           }
 
@@ -813,11 +689,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(runResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(runResult),
             };
           }
 
@@ -840,11 +712,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(sigResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(sigResult),
             };
           }
 
@@ -863,11 +731,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(readResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(readResult),
             };
           }
 
@@ -914,11 +778,7 @@ export function registerMcpEndpoints(
             }
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(cpResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(cpResult),
             };
           }
 
@@ -929,11 +789,7 @@ export function registerMcpEndpoints(
             } });
             return {
               status_code: 200,
-              body: {
-                content: [
-                  { type: "text", text: JSON.stringify(meshResult, null, 2) },
-                ],
-              },
+              body: mcpToolResult(meshResult),
             };
           }
 
@@ -963,7 +819,7 @@ export function registerMcpEndpoints(
               function_id: "mem::sentinel-create",
               payload,
             });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(snlResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(snlResult) };
           }
 
           case "memory_sentinel_trigger": {
@@ -986,7 +842,7 @@ export function registerMcpEndpoints(
               sentinelId,
               result: snlTrigPayload,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(snlTrigResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(snlTrigResult) };
           }
 
           case "memory_sketch_create": {
@@ -1007,7 +863,7 @@ export function registerMcpEndpoints(
               function_id: "mem::sketch-create",
               payload: sketchPayload,
             });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(skResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(skResult) };
           }
 
           case "memory_sketch_promote": {
@@ -1022,7 +878,7 @@ export function registerMcpEndpoints(
               sketchId,
               project: args.project,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(skpResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(skpResult) };
           }
 
           case "memory_crystallize": {
@@ -1035,7 +891,7 @@ export function registerMcpEndpoints(
               project: args.project,
               sessionId: args.sessionId,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(crysResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(crysResult) };
           }
 
           case "memory_diagnose": {
@@ -1043,7 +899,7 @@ export function registerMcpEndpoints(
               ? args.categories.split(",").map((s: string) => s.trim()).filter(Boolean)
               : undefined;
             const diagResult = await sdk.trigger({ function_id: "mem::diagnose", payload: { categories: diagCats } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(diagResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(diagResult) };
           }
 
           case "memory_heal": {
@@ -1054,7 +910,7 @@ export function registerMcpEndpoints(
               categories: healCats,
               dryRun: args.dryRun === true || args.dryRun === "true",
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(healResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(healResult) };
           }
 
           case "memory_facet_tag": {
@@ -1064,7 +920,7 @@ export function registerMcpEndpoints(
               dimension: args.dimension,
               value: args.value,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(fctResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(fctResult) };
           }
 
           case "memory_facet_query": {
@@ -1085,7 +941,7 @@ export function registerMcpEndpoints(
               matchAny: fqAny,
               targetType: args.targetType,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(fqResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(fqResult) };
           }
 
           case "memory_verify": {
@@ -1093,7 +949,7 @@ export function registerMcpEndpoints(
               return { status_code: 400, body: { error: "id is required" } };
             }
             const verifyResult = await sdk.trigger({ function_id: "mem::verify", payload: { id: args.id } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(verifyResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(verifyResult) };
           }
 
           case "memory_lesson_save": {
@@ -1111,7 +967,7 @@ export function registerMcpEndpoints(
               tags: lessonTags,
               source: "manual",
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(lessonSaveResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(lessonSaveResult) };
           }
 
           case "memory_lesson_recall": {
@@ -1124,7 +980,7 @@ export function registerMcpEndpoints(
               minConfidence: args.minConfidence,
               limit: args.limit,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(lessonRecallResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(lessonRecallResult) };
           }
 
           case "memory_lesson_delete": {
@@ -1134,7 +990,7 @@ export function registerMcpEndpoints(
             const lessonDeleteResult = await sdk.trigger({ function_id: "mem::lesson-delete", payload: {
               lessonId: args.lessonId.trim(),
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(lessonDeleteResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(lessonDeleteResult) };
           }
 
           case "memory_reflect": {
@@ -1142,7 +998,7 @@ export function registerMcpEndpoints(
               project: args.project,
               maxClusters: args.maxClusters,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(reflectResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(reflectResult) };
           }
 
           case "memory_insight_list": {
@@ -1151,7 +1007,7 @@ export function registerMcpEndpoints(
               minConfidence: args.minConfidence,
               limit: args.limit,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(insightListResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(insightListResult) };
           }
 
           case "memory_obsidian_export": {
@@ -1162,14 +1018,14 @@ export function registerMcpEndpoints(
               vaultDir: args.vaultDir,
               types: exportTypes,
             } });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(obsidianResult, null, 2) }] } };
+            return { status_code: 200, body: mcpToolResult(obsidianResult) };
           }
 
           case "memory_slot_list": {
             const result = await sdk.trigger({ function_id: "mem::slot-list", payload: {} });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1179,7 +1035,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label } });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1198,7 +1054,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::slot-create", payload });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1209,7 +1065,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text } });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1221,7 +1077,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content: args.content } });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1231,7 +1087,7 @@ export function registerMcpEndpoints(
             const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label } });
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+              body: mcpToolResult(result),
             };
           }
 
@@ -1242,7 +1098,7 @@ export function registerMcpEndpoints(
             if (!link) {
               return {
                 status_code: 200,
-                body: { content: [{ type: "text", text: JSON.stringify({ commit: null, sessions: [] }, null, 2) }] },
+                body: mcpToolResult({ commit: null, sessions: [] }),
               };
             }
             const linkRecord = link as { sessionIds?: string[] };
@@ -1252,7 +1108,7 @@ export function registerMcpEndpoints(
             const sessions = fetched.filter((s) => s !== null);
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify({ commit: link, sessions }, null, 2) }] },
+              body: mcpToolResult({ commit: link, sessions }),
             };
           }
 
@@ -1268,7 +1124,7 @@ export function registerMcpEndpoints(
               .slice(0, limit);
             return {
               status_code: 200,
-              body: { content: [{ type: "text", text: JSON.stringify({ commits: filtered }, null, 2) }] },
+              body: mcpToolResult({ commits: filtered }),
             };
           }
 
