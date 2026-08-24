@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { GraphEdge, GraphNode } from "../src/types.js";
+import type { GraphEdge, GraphNode, GraphSnapshot } from "../src/types.js";
+import { persistGraphDelta } from "../src/functions/graph.js";
 import {
+  GRAPH_SNAPSHOT_KEY,
   SNAPSHOT_TOP_CAP,
   emptyGraphSnapshot,
   isResetOrphan,
@@ -9,6 +11,7 @@ import {
   upsertSnapshotEdge,
   upsertSnapshotNode,
 } from "../src/state/graph-snapshot.js";
+import { KV } from "../src/state/schema.js";
 
 function node(id: string): GraphNode {
   return {
@@ -74,5 +77,38 @@ describe("graph snapshot helpers", () => {
     expect(isResetOrphan(snap, "2026-08-01T00:00:00Z")).toBe(true);
     expect(isResetOrphan(snap, "2026-08-25T00:00:00Z")).toBe(false);
     expect(isResetOrphan(null, "2026-08-01T00:00:00Z")).toBe(false);
+  });
+
+  it("extract merge does not recount a stale node", async () => {
+    const store = new Map<string, Map<string, unknown>>();
+    const kv = {
+      get: async <T>(scope: string, key: string): Promise<T | null> =>
+        (store.get(scope)?.get(key) as T) ?? null,
+      set: async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (!store.has(scope)) store.set(scope, new Map());
+        store.get(scope)!.set(key, data);
+        return data;
+      },
+      delete: async () => {},
+      list: async <T>(scope: string): Promise<T[]> => {
+        const entries = store.get(scope);
+        return entries ? (Array.from(entries.values()) as T[]) : [];
+      },
+    };
+    const stale = { ...node("n_stale"), name: "poison", stale: true };
+    await kv.set(KV.graphNodes, stale.id, stale);
+    await kv.set(KV.graphNameIndex, "concept|poison", stale.id);
+    await kv.set(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY, emptyGraphSnapshot());
+
+    await persistGraphDelta(
+      kv as never,
+      [{ ...stale, id: "fresh", stale: undefined }],
+      [],
+      ["obs_2"],
+    );
+
+    const snap = await kv.get<GraphSnapshot>(KV.graphSnapshot, GRAPH_SNAPSHOT_KEY);
+    expect(snap?.countedNodeIds?.[stale.id]).toBeUndefined();
+    expect(snap?.stats.totalNodes).toBe(0);
   });
 });

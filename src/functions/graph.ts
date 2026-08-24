@@ -600,8 +600,6 @@ export async function persistGraphDelta(
         snap.topNodes[topIdx] = merged;
         snapMutated = true;
       }
-      snap.countedNodeIds ??= {};
-      snap.countedNodeIds[existing.id] = true;
     } else {
       await kv.set(KV.graphNodes, node.id, node);
       await kv.set(KV.graphNameIndex, indexKey, node.id);
@@ -653,8 +651,6 @@ export async function persistGraphDelta(
         snap.topEdges[topIdx] = merged;
         snapMutated = true;
       }
-      snap.countedEdgeIds ??= {};
-      snap.countedEdgeIds[existing.id] = true;
     } else {
       await kv.set(KV.graphEdges, edge.id, edge);
       await kv.set(KV.graphEdgeKey, eKey, edge.id);
