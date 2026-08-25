@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Agent instructions
 
-**Read `README.md` first** for why this Cursor fork exists and its goals.
+**Read `README.md` first** — it is the source of truth for why this Cursor fork exists, its goals, and what has shipped here.
 **Read `AGENTS.md`** for architecture, consistency rules, code patterns, and testing.
 If docs and code disagree, trust code and update docs in the same change.
 If anything is unclear or instructions conflict, STOP and ask.

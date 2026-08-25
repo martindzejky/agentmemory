@@ -2,7 +2,7 @@
 
 Fork of [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory).
 
-For install, architecture, MCP tools, REST API, and the rest of the product, read the [upstream README](https://github.com/rohitg00/agentmemory/blob/main/README.md).
+**This README is the source of truth for this fork:** why it exists, the Cursor-host goals, and what has shipped here versus upstream. Keep it current when that picture changes. `AGENTS.md` is for architecture and consistency rules. For install, MCP tools, REST endpoints, and the rest of the product, read the [upstream README](https://github.com/rohitg00/agentmemory/blob/main/README.md).
 
 ## Why this fork
 
@@ -11,6 +11,8 @@ Upstream AgentMemory assumes Claude Code. Sessions start and end. Tool calls are
 Cursor does not work that way, and Cursor Cloud is worse. Conversations stay open. End hooks flake. If you force Cursor into the Claude model on the client, you invent fake tool observations, cache prompts, and fake session boundaries. Fix the server instead.
 
 This fork treats Cursor as a real host. Host adapters stay thin. They map native events into one shared envelope and send them. The server keeps the raw event log, accepts late events on old conversations, and consolidates asynchronously.
+
+A second, later gap: the production deploy of this fork OOM-killed under Cursor hook load. Upstream's graph and search paths assume a `kv.list` of a whole KV scope is cheap. In iii-engine it is not — `state::list` has no pagination, so a graph-table list materializes as one JSON array. This fork now bounds that work and treats the graph as a derived catalog, not a source of truth.
 
 ## Goals
 
@@ -24,8 +26,11 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 - **`/session/end` is a deprecated noop.** Keep the route for old clients. It must not close the conversation, stamp completed, fan out processing, or reject later events. If the UI needs an archive flag, that is a user action, not an ingest state.
 - **Keep host adapters thin.** They translate hook payloads into the shared envelope. They do not paper over server gaps with prompt caches or fake tool events. Skip agent thoughts by default. Keep prompts, final responses, decisions, and useful tool outcomes.
 - **Import Cursor local transcripts.** Upstream already imports Claude Code JSONL (`import-jsonl` / `POST /agentmemory/replay/import-jsonl`, parser in `src/replay/jsonl-parser.ts`). That path is Claude-shaped (`type`/`message.role`/`tool_use` lines under `~/.claude/projects`) and writes synthetic compressed observations plus heuristic crystals. It does not walk `mem::observe` like live hooks. Cursor stores a different local transcript schema. This fork should parse Cursor transcripts (prompts and agent messages first; useful tool outcomes when present), map them into the shared envelope (`prompt_submit` / `assistant_response` / tool events as appropriate), and ingest through the standard observe → compress → summarize / idle-sweep path so historical chats become real memory the same way hook traffic does.
+- **Stay alive under Cursor hook load.** Hook clients abort at 2.5s and the server is never told. Bound the hook path, do not `kv.list` the graph tables, and keep the live graph a derived catalog of observations and memories.
 
 ## Current fork progress
+
+### Cursor host (passes A–J)
 
 - **Session start is optional.** `/observe`, `/summarize`, and `/enrich` lazy-create a session when `sessionId` + `project` + `cwd` arrive without a prior `/session/start`. Request `agentId` is honored on that create (e.g. `"cursor"`); `/session/start` still works for clients that call it.
 - **Pass B. `/session/end` deprecated noop.** Sessions are not closed by ingest lifecycle (`api::session::end` / `event::session::ended` do not stamp `completed` / `endedAt` or fan out stopped work). Start remains optional (Pass A).
@@ -37,6 +42,30 @@ This fork treats Cursor as a real host. Host adapters stay thin. They map native
 - **Pass H. Durable ingest idempotency.** `eventId` is persisted on `RawObservation` in `KV.rawEvents` and indexed in `KV.eventIds` (`mem:evt:{sessionId}`). Retries survive restart (no TTL) for as long as the event exists; a retry that arrives after the first write has landed will dedup on any replica. Concurrent same-`eventId` delivery to different replicas can still double-write (the observe lock is in-process). The index entry is pruned with the raw event (and cleared on whole-session forget). Import and snapshot restore re-index events that carry an `eventId`.
 - **Pass I. Raw log reader and upgrade-aware summarize.** `mem::compress` loads its input from `KV.rawEvents` (payload `raw` remains an optional fallback). Derived rows record `derivedBy: "synthetic" | "llm"`. When `AGENTMEMORY_AUTO_COMPRESS` is on, summarize truncates its eligible batch at the first non-`llm` row still inside `AGENTMEMORY_COMPRESS_UPGRADE_GRACE_MS` (default 5 minutes), including periodic full rebuilds, so an in-place LLM upgrade cannot be skipped by the watermark. Past the grace window the synthetic row is summarized as-is.
 - **Pass J. Upgrade-aware reflect and graph extraction.** Shared helper `truncateAwaitingLlmUpgrade` in `src/functions/compress-upgrade-gate.ts` gates `mem::slot-reflect`, the `event::session::stopped` graph-extract fan-out, and session-scoped `mem::graph-extract` the same way as summarize when auto-compress is on. Watermarks and downstream work derive from the gated batch only; import callers without `sessionId` stay ungated.
-- **Vision is out of scope.** Investigated and dropped 2026-08-11. Ingest already stores images (`extractImage` → `~/.agentmemory/images/{sha256}`, refcounted in `KV.imageRefs`), but nothing downstream works. `describeImage` is optional on `MemoryProvider` and only `AnthropicProvider` implements it, yet `ResilientProvider` (what `createProvider` actually returns) does not delegate it, so the caption path is dead for every provider. `memory_vision_search` searches CLIP vectors only, produced by a local `Xenova/clip-vit-base-patch32` behind `AGENTMEMORY_IMAGE_EMBEDDINGS`, unrelated to the configured LLM. None of that matters yet because Cursor supplies no images: `beforeSubmitPrompt` attachments are `{ type: "file" | "rule", file_path }` and `afterAgentResponse` is one text field. If images ever become reachable it will be through `transcript_path`, so vision belongs with the Cursor transcript import goal, not as its own pass.
-- **Reliability pass. Bounded work on the hook path.** Hook clients abort at 2.5s and the server is never told (iii's HTTP trigger carries no abort signal, its protocol has no cancel message), so the server bounds itself: an enrich budget, a cap on concurrent searches, timeouts on every state RPC, the observe embedding moved to a bounded queue instead of an awaited provider round-trip inside the session lock, and cached file-context enumerations. The graph stream in hybrid search is behind `AGENTMEMORY_GRAPH_SEARCH` (default off). When on, it uses write-path token and adjacency indexes instead of listing the graph tables. Health reads the cgroup so it can see the container the OOM killer acts on, not just this process's heap. Evidence and measurements: `docs/investigations/2026-08-24-latency-and-oom.md`.
 - **Cursor local transcript import.** Added `POST /agentmemory/observe/bulk` (serial batch of `mem::observe`, max 500). Historical local chats are imported with [agentmemory-cursor-importer](https://github.com/martindzejky/agentmemory-cursor-importer): prompts + assistant text only, session-exists skip, stable `eventId`s, timestamps from user `<timestamp>` tags or file birthtime/+1ms. Cloud transcripts are out of scope.
+
+### Reliability (2026-08)
+
+Production of this fork (`memory` on Railway) OOM-killed and returned HTTP 499s under Cursor hook load. The main defect: every hybrid search listed `KV.graphNodes` and `KV.graphEdges` (no pagination), then discarded the hits because retrieval hardcoded an empty `sessionId`. At 32k nodes / 61k edges that was ~60 MB of JSON and ~2s of KV time per query, plus engine RSS that never came back. Hooks abort at 2.5s; iii's HTTP trigger has no abort signal, so the server kept working.
+
+What shipped (merged PRs #25–#29):
+
+- **Bounded hook path.** Enrich budget, search concurrency cap, KV read timeouts, observe embedding moved off the session lock onto a queue, cached file-context enumerations. Writes stay unbounded on purpose: a timeout is not a cancel, and a late commit would race observe rollback. Health reads the cgroup (the container the OOM killer sees), not just this process's heap. Evidence: `docs/investigations/2026-08-24-latency-and-oom.md`.
+- **Background LLM gate.** Compress, summarize, and LLM graph-extract share `AGENTMEMORY_BACKGROUND_LLM_CONCURRENCY` (default 2) so a hook burst does not start one provider call per event.
+- **Snapshot-only graph readers.** After a graph reset, `KV.graphNodes` / `KV.graphEdges` still hold orphan rows. Query, search, export, reflect, mesh, cascade, temporal merge, and MCP graph stats read the snapshot only. `mem::graph-snapshot-rebuild` refuses after `resetAt` even with `force`. Incremental extract still fills the snapshot.
+- **Write-path graph search indexes.** When `AGENTMEMORY_GRAPH_SEARCH=true`, search uses token, adjacency, and observation indexes written by `persistGraphDelta`, temporal extract, mesh apply/receive, and cascade. Keys are namespaced by `resetAt`, so pre-reset orphans are never read. First search backfills from the snapshot once per reset. It does not `kv.list` the graph tables. The flag must be the string `true`; the code default stays off.
+
+Graph model this fork settled on:
+
+- Observations and memories are the source of truth.
+- The graph is a derived catalog. Reset clears the live snapshot; it does not delete orphan graph-table rows.
+- Leave those orphans on disk. Do not index them. Do not vacuum. Do not run `snapshot-rebuild` after `resetAt`.
+- A reset live graph starts empty (0/0). Graph search is then safe but adds no recall until extract writes post-reset nodes.
+
+Intentionally not done: real HTTP cancel (iii has no abort), vacuum, hook rewrite, and vision.
+
+Upstream syncs are high-risk now. The fork sits on the same lines upstream keeps editing; a clean merge can silently restore the old OOM path. Walk `.cursor/commands/sync-upstream.md` (including its load-bearing patches table) even when there are no conflicts. Do not edit the guard tests to match upstream.
+
+### Out of scope
+
+- **Vision.** Investigated and dropped 2026-08-11. Ingest already stores images (`extractImage` → `~/.agentmemory/images/{sha256}`, refcounted in `KV.imageRefs`), but nothing downstream works. `describeImage` is optional on `MemoryProvider` and only `AnthropicProvider` implements it, yet `ResilientProvider` (what `createProvider` actually returns) does not delegate it, so the caption path is dead for every provider. `memory_vision_search` searches CLIP vectors only, produced by a local `Xenova/clip-vit-base-patch32` behind `AGENTMEMORY_IMAGE_EMBEDDINGS`, unrelated to the configured LLM. None of that matters yet because Cursor supplies no images: `beforeSubmitPrompt` attachments are `{ type: "file" | "rule", file_path }` and `afterAgentResponse` is one text field. If images ever become reachable it will be through `transcript_path`, so vision belongs with the Cursor transcript import goal, not as its own pass.
