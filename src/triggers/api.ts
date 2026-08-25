@@ -287,8 +287,8 @@ export function registerApiTriggers(
           default: false,
           affects: ["Search", "Recall"],
           needsLlm: false,
-          description: "Adds a knowledge-graph stream to search ranking. OFF because the current implementation enumerates the whole graph on every query (measured 60 MB and ~2s at 32K nodes) and its results are discarded downstream.",
-          enableHow: "Set AGENTMEMORY_GRAPH_SEARCH=true. Expect multi-second searches on a large graph.",
+          description: "Adds a knowledge-graph stream to search ranking. OFF by default. When on, looks up names and neighbors through write-path indexes (no full-graph list).",
+          enableHow: "Set AGENTMEMORY_GRAPH_SEARCH=true.",
           docsHref: "https://github.com/rohitg00/agentmemory/issues/937",
         },
       ];

@@ -3,9 +3,19 @@ import type {
   GraphEdge,
 } from "../types.js";
 import type { StateKV } from "../state/kv.js";
+import { KV } from "../state/schema.js";
 import { getGraphSearchBudgetMs, getGraphSearchMaxSeeds } from "../config.js";
 import { recordDeadlineExceeded } from "../utils/deadline.js";
 import { loadSnapshotGraph } from "../state/graph-snapshot.js";
+import {
+  ensureSearchIndex,
+  graphEdgeFromSearchNeighbor,
+  graphNodeFromSearchRecord,
+  loadSearchNodeRecord,
+  lookupObsNodeIds,
+  lookupTokenNodeIds,
+  tokenizeGraphName,
+} from "../state/graph-search-index.js";
 
 export interface GraphRetrievalResult {
   obsId: string;
@@ -15,9 +25,10 @@ export interface GraphRetrievalResult {
   pathLength: number;
 }
 
-interface TraversalContext {
-  nodeIndex: Map<string, GraphNode>;
-  adjacency: Map<string, Array<{ neighborId: string; edge: GraphEdge }>>;
+interface LazyTraversal {
+  resetAt: string;
+  nodes: Map<string, GraphNode>;
+  adj: Map<string, Array<{ neighborId: string; edge: GraphEdge }>>;
 }
 
 function buildGraphContext(
@@ -53,38 +64,22 @@ export class GraphRetrieval {
     maxDepth = 2,
     maxResults = 20,
   ): Promise<GraphRetrievalResult[]> {
-    const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(this.kv);
+    const resetAt = await ensureSearchIndex(this.kv);
+    const tokens = [
+      ...new Set(entityNames.flatMap((name) => tokenizeGraphName(name))),
+    ];
+    if (tokens.length === 0) return [];
 
-    const matchingNodes = allNodes.filter((n) => {
-      const nameLower = n.name.toLowerCase();
-      return entityNames.some(
-        (e) =>
-          nameLower.includes(e.toLowerCase()) ||
-          e.toLowerCase().includes(nameLower),
-      );
-    });
+    const candidateIds = await lookupTokenNodeIds(this.kv, resetAt, tokens);
+    const seeds = await this.rankSeedNodes(candidateIds, resetAt);
+    if (seeds.length === 0) return [];
 
-    if (matchingNodes.length === 0) return [];
-
-    // A broad entity match ("Railway", "src") can match thousands of nodes.
-    // Traversal cost is O(seeds x edges), which measured 62s for a single call
-    // on a 32K-node / 61K-edge graph. Highest-degree seeds first: they reach the
-    // most of the graph per unit of work.
-    const degree = new Map<string, number>();
-    for (const edge of allEdges) {
-      degree.set(edge.sourceNodeId, (degree.get(edge.sourceNodeId) ?? 0) + 1);
-      degree.set(edge.targetNodeId, (degree.get(edge.targetNodeId) ?? 0) + 1);
-    }
-    const seeds = matchingNodes
-      .slice()
-      .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
-      .slice(0, getGraphSearchMaxSeeds());
-
-    // Adjacency was previously rebuilt inside dijkstraTraversal for every seed,
-    // an O(V+E) pass each time. Build it once and share it.
-    const shared = this.buildTraversalContext(allNodes, allEdges);
+    const ctx: LazyTraversal = {
+      resetAt,
+      nodes: new Map(seeds.map((n) => [n.id, n])),
+      adj: new Map(),
+    };
     const budgetExpiresAt = Date.now() + getGraphSearchBudgetMs();
-
     const results: GraphRetrievalResult[] = [];
     const visitedObs = new Set<string>();
 
@@ -93,11 +88,7 @@ export class GraphRetrieval {
         recordDeadlineExceeded("graph.searchByEntities");
         break;
       }
-      const paths = this.dijkstraTraversal(
-        startNode,
-        shared,
-        maxDepth,
-      );
+      const paths = await this.dijkstraTraversal(startNode, ctx, maxDepth);
 
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
@@ -147,15 +138,18 @@ export class GraphRetrieval {
     maxDepth = 1,
     maxResults = 10,
   ): Promise<GraphRetrievalResult[]> {
-    const { nodes: allNodes, edges: allEdges } = await loadSnapshotGraph(this.kv);
+    const resetAt = await ensureSearchIndex(this.kv);
+    const linkedIds = await lookupObsNodeIds(this.kv, resetAt, obsIds);
+    const linkedNodes = (
+      await this.loadLiveNodes(linkedIds, resetAt)
+    ).slice(0, getGraphSearchMaxSeeds());
 
-    const linkedNodes = allNodes
-      .filter((n) => n.sourceObservationIds.some((id) => obsIds.includes(id)))
-      .slice(0, getGraphSearchMaxSeeds());
-
-    const shared = this.buildTraversalContext(allNodes, allEdges);
+    const ctx: LazyTraversal = {
+      resetAt,
+      nodes: new Map(linkedNodes.map((n) => [n.id, n])),
+      adj: new Map(),
+    };
     const budgetExpiresAt = Date.now() + getGraphSearchBudgetMs();
-
     const results: GraphRetrievalResult[] = [];
     const visitedObs = new Set<string>(obsIds);
 
@@ -164,7 +158,7 @@ export class GraphRetrieval {
         recordDeadlineExceeded("graph.expandFromChunks");
         break;
       }
-      const paths = this.dijkstraTraversal(node, shared, maxDepth);
+      const paths = await this.dijkstraTraversal(node, ctx, maxDepth);
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
         for (const obsId of lastNode.sourceObservationIds) {
@@ -260,44 +254,93 @@ export class GraphRetrieval {
     return latest;
   }
 
+  private async rankSeedNodes(
+    candidateIds: string[],
+    resetAt: string,
+  ): Promise<GraphNode[]> {
+    if (candidateIds.length === 0) return [];
+    const degrees = await Promise.all(
+      candidateIds.map((id) => kvGetNumber(this.kv, id)),
+    );
+    const rankedIds = candidateIds
+      .map((id, i) => ({ id, degree: degrees[i] }))
+      .sort((a, b) => b.degree - a.degree)
+      .slice(0, getGraphSearchMaxSeeds())
+      .map((r) => r.id);
+    return this.loadLiveNodes(rankedIds, resetAt);
+  }
+
+  private async loadLiveNodes(
+    ids: string[],
+    resetAt: string,
+  ): Promise<GraphNode[]> {
+    const rows = await Promise.all(
+      ids.map(async (id) => {
+        const [live, record] = await Promise.all([
+          this.kv.get<GraphNode>(KV.graphNodes, id),
+          loadSearchNodeRecord(this.kv, resetAt, id),
+        ]);
+        if (live?.stale) return null;
+        if (resetAt && live?.createdAt && live.createdAt < resetAt) return null;
+        if (live) return live;
+        if (!record) return null;
+        if (resetAt && record.createdAt && record.createdAt < resetAt) {
+          return null;
+        }
+        return graphNodeFromSearchRecord(record);
+      }),
+    );
+    return rows.filter((node): node is GraphNode => node !== null);
+  }
+
+  private async neighborsOf(
+    ctx: LazyTraversal,
+    nodeId: string,
+  ): Promise<Array<{ neighborId: string; edge: GraphEdge }>> {
+    const cached = ctx.adj.get(nodeId);
+    if (cached) return cached;
+
+    const record = await loadSearchNodeRecord(this.kv, ctx.resetAt, nodeId);
+    const out: Array<{ neighborId: string; edge: GraphEdge }> = [];
+    for (const n of record?.neighbors ?? []) {
+      const [liveNode, liveEdge] = await Promise.all([
+        this.kv.get<GraphNode>(KV.graphNodes, n.neighborId),
+        this.kv.get<GraphEdge>(KV.graphEdges, n.edgeId),
+      ]);
+      if (liveNode?.stale) continue;
+      if (ctx.resetAt && liveNode?.createdAt && liveNode.createdAt < ctx.resetAt) {
+        continue;
+      }
+      if (liveEdge?.stale) continue;
+      if (ctx.resetAt && liveEdge?.createdAt && liveEdge.createdAt < ctx.resetAt) {
+        continue;
+      }
+      const neighbor =
+        liveNode ??
+        (await loadSearchNodeRecord(this.kv, ctx.resetAt, n.neighborId).then(
+          (row) => (row ? graphNodeFromSearchRecord(row) : null),
+        ));
+      if (!neighbor) continue;
+      const edge = liveEdge ?? graphEdgeFromSearchNeighbor(n, nodeId);
+      ctx.nodes.set(neighbor.id, neighbor);
+      out.push({ neighborId: n.neighborId, edge });
+    }
+    ctx.adj.set(nodeId, out);
+    return out;
+  }
+
   // Weighted shortest-path traversal (#328). Replaces the prior BFS,
   // which fell back to edge-count order and ignored the 0.1-1.0 weight
   // attached to every graph edge. Dijkstra over `cost = 1/weight`
   // (cheaper edges = stronger relationships) returns the
-  // highest-weighted path to each reachable node within maxDepth. Also
-  // tightens the perf profile:
-  //   - Adjacency built once in O(V+E) (previous BFS re-filtered
-  //     allEdges per visited node, O(V·E) overall).
-  //   - Min-heap dequeue is O(log V) per pop (previous queue.shift()
-  //     was O(n) — the dominant cost on graphs above ~200 nodes per
-  //     the contributor's benchmark in #328).
-  // Built once per retrieval call and shared across seeds. Building it per seed
-  // is what made a wide entity match quadratic.
-  private buildTraversalContext(
-    allNodes: GraphNode[],
-    allEdges: GraphEdge[],
-  ): TraversalContext {
-    const nodeIndex = new Map<string, GraphNode>();
-    for (const n of allNodes) nodeIndex.set(n.id, n);
-
-    const adjacency = new Map<string, Array<{ neighborId: string; edge: GraphEdge }>>();
-    for (const edge of allEdges) {
-      const a = edge.sourceNodeId;
-      const b = edge.targetNodeId;
-      if (!adjacency.has(a)) adjacency.set(a, []);
-      if (!adjacency.has(b)) adjacency.set(b, []);
-      adjacency.get(a)!.push({ neighborId: b, edge });
-      adjacency.get(b)!.push({ neighborId: a, edge });
-    }
-
-    return { nodeIndex, adjacency };
-  }
-
-  private dijkstraTraversal(
+  // highest-weighted path to each reachable node within maxDepth.
+  // Neighbors come from the write-path adjacency index, not a full
+  // in-memory graph.
+  private async dijkstraTraversal(
     startNode: GraphNode,
-    { nodeIndex, adjacency }: TraversalContext,
+    ctx: LazyTraversal,
     maxDepth: number,
-  ): Array<Array<{ node: GraphNode; edge?: GraphEdge }>> {
+  ): Promise<Array<Array<{ node: GraphNode; edge?: GraphEdge }>>> {
     const dist = new Map<string, number>();
     const pathTo = new Map<string, Array<{ node: GraphNode; edge?: GraphEdge }>>();
     dist.set(startNode.id, 0);
@@ -310,16 +353,13 @@ export class GraphRetrieval {
 
     while (heap.size() > 0) {
       const { nodeId, depth, cost } = heap.pop()!;
-      // Skip stale heap entries (cost beaten by a later push).
       if (cost > (dist.get(nodeId) ?? Infinity)) continue;
       if (depth >= maxDepth) continue;
 
-      const neighbors = adjacency.get(nodeId) ?? [];
+      const neighbors = await this.neighborsOf(ctx, nodeId);
       for (const { neighborId, edge } of neighbors) {
-        const nextNode = nodeIndex.get(neighborId);
+        const nextNode = ctx.nodes.get(neighborId);
         if (!nextNode) continue;
-        // Clamp weight to avoid division-by-zero on malformed edges;
-        // 0.01 is below the documented 0.1 floor.
         const edgeCost = 1 / Math.max(edge.weight, 0.01);
         const newCost = cost + edgeCost;
         if (newCost < (dist.get(neighborId) ?? Infinity)) {
@@ -343,6 +383,11 @@ export class GraphRetrieval {
     pathTo.delete(startNode.id);
     return Array.from(pathTo.values());
   }
+}
+
+async function kvGetNumber(kv: StateKV, nodeId: string): Promise<number> {
+  const raw = await kv.get<number>(KV.graphNodeDegree, nodeId);
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
 }
 
 // Minimal binary min-heap. Pulled inline so graph-retrieval doesn't
@@ -396,7 +441,7 @@ class MinHeap<T> {
         smallest = right;
       }
       if (smallest === i) break;
-      [this.heap[i], this.heap[smallest]] = [this.heap[smallest], this.heap[i]];
+      [this.heap[smallest], this.heap[i]] = [this.heap[i], this.heap[smallest]];
       i = smallest;
     }
   }

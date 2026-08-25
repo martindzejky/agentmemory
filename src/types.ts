@@ -573,6 +573,46 @@ export interface GraphSnapshot {
   countedEdgeIds?: Record<string, true>;
 }
 
+export interface GraphSearchTokenPosting {
+  token: string;
+  nodeIds: string[];
+  resetAt: string;
+}
+
+export interface GraphSearchObsPosting {
+  observationId: string;
+  nodeIds: string[];
+  resetAt: string;
+}
+
+export interface GraphSearchNeighbor {
+  neighborId: string;
+  edgeId: string;
+  type: GraphEdgeType;
+  weight: number;
+  context?: EdgeContext;
+  tvalid?: string;
+}
+
+export interface GraphSearchNodeIndex {
+  nodeId: string;
+  name: string;
+  type: GraphNodeType;
+  properties: Record<string, unknown>;
+  createdAt: string;
+  tokens: string[];
+  observationIds: string[];
+  neighbors: GraphSearchNeighbor[];
+  resetAt: string;
+}
+
+export interface GraphSearchIndexMeta {
+  resetAt: string;
+  indexedAt: string;
+  nodeCount: number;
+  edgeCount: number;
+}
+
 export type ConsolidationTier =
   | "working"
   | "episodic"

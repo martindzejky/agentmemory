@@ -9,6 +9,7 @@ import {
   removeSnapshotNode,
   writeGraphSnapshot,
 } from "../state/graph-snapshot.js";
+import { indexGraphDelta } from "../state/graph-search-index.js";
 
 export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::cascade-update", 
@@ -31,6 +32,8 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
       if (obsIds.size > 0) {
         const now = new Date().toISOString();
         const { snapshot, nodes, edges } = await loadSnapshotGraph(kv);
+        const staleNodes: GraphNode[] = [];
+        const staleEdges: GraphEdge[] = [];
         for (const edge of edges) {
           if (edge.stale) continue;
           const overlap = (edge.sourceObservationIds ?? []).some((id) => obsIds.has(id));
@@ -44,6 +47,7 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
               supersededMemoryId: data.supersededMemoryId,
             });
             flaggedEdges++;
+            staleEdges.push(edge);
           }
         }
 
@@ -61,11 +65,20 @@ export function registerCascadeFunction(sdk: ISdk, kv: StateKV): void {
               supersededMemoryId: data.supersededMemoryId,
             });
             flaggedNodes++;
+            staleNodes.push(node);
           }
         }
 
         if (snapshot && flaggedNodes + flaggedEdges > 0) {
           await writeGraphSnapshot(kv, snapshot);
+        }
+        if (staleNodes.length > 0 || staleEdges.length > 0) {
+          await indexGraphDelta(
+            kv,
+            staleNodes,
+            staleEdges,
+            snapshot?.resetAt ?? "",
+          );
         }
       }
 

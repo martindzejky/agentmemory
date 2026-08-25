@@ -23,6 +23,7 @@ import {
   upsertSnapshotNode,
   writeGraphSnapshot,
 } from "../state/graph-snapshot.js";
+import { indexGraphDelta } from "../state/graph-search-index.js";
 
 function isPrivateIP(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1" || ip === "0.0.0.0") return true;
@@ -126,19 +127,26 @@ async function persistGraphPayloadToSnapshot(
   if (incomingNodes.length === 0 && incomingEdges.length === 0) return;
   const { snapshot } = await loadSnapshotGraph(kv);
   const snap = snapshot ?? emptyGraphSnapshot();
+  const indexedNodes: GraphNode[] = [];
+  const indexedEdges: GraphEdge[] = [];
   for (const node of incomingNodes) {
     if (!node.id) continue;
     const stored = await kv.get<GraphNode>(KV.graphNodes, node.id);
     if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
     upsertSnapshotNode(snap, stored);
+    indexedNodes.push(stored);
   }
   for (const edge of incomingEdges) {
     if (!edge.id) continue;
     const stored = await kv.get<GraphEdge>(KV.graphEdges, edge.id);
     if (!stored || isResetOrphan(snap, stored.createdAt)) continue;
     upsertSnapshotEdge(snap, stored);
+    indexedEdges.push(stored);
   }
   await writeGraphSnapshot(kv, snap);
+  if (indexedNodes.length > 0 || indexedEdges.length > 0) {
+    await indexGraphDelta(kv, indexedNodes, indexedEdges, snap.resetAt ?? "");
+  }
 }
 
 async function lwwMergeGraphNodes(
