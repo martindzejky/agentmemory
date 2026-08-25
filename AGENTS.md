@@ -2,7 +2,7 @@
 
 ## Docs
 
-`README.md` in this fork is purpose-made for the Cursor-oriented fork (why it exists, goals). Do not put product stats, install guides, or tool/endpoint catalogs there. Upstream keeps the full product README: https://github.com/rohitg00/agentmemory/blob/main/README.md
+`README.md` in this fork is the source of truth for why the fork exists, its goals, and what has shipped here. Do not put product stats, install guides, or tool/endpoint catalogs there. Upstream keeps the full product README: https://github.com/rohitg00/agentmemory/blob/main/README.md
 
 ## Architecture
 
