@@ -291,9 +291,9 @@ function persistentKV() {
 }
 
 // Regression: event::session::stopped may still be invoked by eviction /
-// recovery. consolidate-pipeline + auto-crystallize are full-corpus LLM work
-// with no internal "nothing changed" guard, so the debounce bounds corpus
-// consolidation to once per cooldown.
+// recovery. auto-crystallize has no skip guard; consolidate-pipeline now
+// skips an unchanged corpus but the first extract after a summary change
+// is still expensive. The debounce bounds both to once per cooldown.
 describe("session-stop consolidation debounce", () => {
   beforeEach(() => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);

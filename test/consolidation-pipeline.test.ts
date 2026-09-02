@@ -52,6 +52,10 @@ function mockSdk() {
   };
 }
 
+function registerNoopReflect(sdk: ReturnType<typeof mockSdk>) {
+  sdk.registerFunction("mem::reflect", async () => ({ success: true, insights: [] }));
+}
+
 function makeSummary(i: number): SessionSummary {
   return {
     sessionId: `ses_${i}`,
@@ -248,5 +252,324 @@ describe("Consolidation Pipeline", () => {
     expect(result.success).toBe(true);
     expect(result.results).toBeDefined();
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
+  });
+
+  it("skips semantic LLM and reflect when summaries are unchanged", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">TypeScript is the primary language</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    registerNoopReflect(sdk);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const first = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { success: boolean; results: Record<string, unknown> };
+    expect(first.success).toBe(true);
+    expect((first.results.semantic as { newFacts: number }).newFacts).toBe(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+
+    const second = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { success: boolean; results: Record<string, unknown> };
+    expect(second.success).toBe(true);
+    expect(second.results.semantic).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+      totalSummaries: 6,
+    });
+    expect(second.results.reflect).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+    });
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+    expect(await kv.list("mem:semantic")).toHaveLength(1);
+  });
+
+  it("unchanged corpus skip still applies when force is true", async () => {
+    vi.mocked(isConsolidationEnabled).mockReturnValue(false);
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.8">Forced extract</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    await sdk.trigger("mem::consolidate-pipeline", { force: true, tier: "semantic" });
+    await sdk.trigger("mem::consolidate-pipeline", { force: true, tier: "semantic" });
+
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+    vi.mocked(isConsolidationEnabled).mockReturnValue(true);
+  });
+
+  it("semantic-only stamp does not skip a later reflect", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">TypeScript is the primary language</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    const reflect = vi.fn(async () => ({ success: true, insights: [] }));
+    sdk.registerFunction("mem::reflect", reflect);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    await sdk.trigger("mem::consolidate-pipeline", { tier: "semantic" });
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+    expect(reflect).not.toHaveBeenCalled();
+
+    const all = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(all.results.semantic).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+    });
+    expect(reflect).toHaveBeenCalledTimes(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+
+    const again = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(again.results.reflect).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+    });
+    expect(reflect).toHaveBeenCalledTimes(1);
+  });
+
+  it("reruns extraction when a recent summary changes", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">TypeScript is the primary language</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    await sdk.trigger("mem::consolidate-pipeline", { tier: "semantic" });
+    const updated = { ...makeSummary(0), narrative: "Changed the approach" };
+    await kv.set("mem:summaries", "ses_0", updated);
+    await sdk.trigger("mem::consolidate-pipeline", { tier: "semantic" });
+
+    expect(provider.summarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not stamp the corpus fingerprint when semantic extraction fails", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("provider down"))
+        .mockResolvedValue(
+          `<facts><fact confidence="0.9">Recovered fact</fact></facts>`,
+        ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const failed = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+    })) as { results: Record<string, unknown> };
+    expect(failed.results.semantic).toMatchObject({ error: "provider down" });
+
+    const recovered = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+    })) as { results: Record<string, unknown> };
+    expect((recovered.results.semantic as { newFacts: number }).newFacts).toBe(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not stamp when semantic fails on tier all", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("provider down"))
+        .mockResolvedValue(
+          `<facts><fact confidence="0.9">Recovered fact</fact></facts>`,
+        ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    const reflect = vi.fn(async () => ({ success: true, insights: [] }));
+    sdk.registerFunction("mem::reflect", reflect);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const failed = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(failed.results.semantic).toMatchObject({ error: "provider down" });
+    expect(reflect).toHaveBeenCalledTimes(1);
+
+    const recovered = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect((recovered.results.semantic as { newFacts: number }).newFacts).toBe(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(2);
+    expect(reflect).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not stamp the corpus fingerprint when reflect fails", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">TypeScript is the primary language</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    sdk.registerFunction("mem::reflect", async () => {
+      throw new Error("reflect down");
+    });
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const failed = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(failed.results.reflect).toMatchObject({ error: "reflect down" });
+
+    registerNoopReflect(sdk);
+    await sdk.trigger("mem::consolidate-pipeline", { tier: "all" });
+    expect(provider.summarize).toHaveBeenCalledTimes(2);
+  });
+
+  it("decay writes only rows whose strength changed", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn(),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    const now = new Date().toISOString();
+    const staleAt = new Date(Date.now() - 60 * 86400000).toISOString();
+    await kv.set("mem:semantic", "sem_fresh", {
+      id: "sem_fresh",
+      fact: "recent fact",
+      confidence: 0.8,
+      sourceSessionIds: ["ses_1"],
+      sourceMemoryIds: [],
+      accessCount: 1,
+      lastAccessedAt: now,
+      strength: 0.9,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies SemanticMemory);
+    await kv.set("mem:semantic", "sem_stale", {
+      id: "sem_stale",
+      fact: "old fact",
+      confidence: 0.8,
+      sourceSessionIds: ["ses_1"],
+      sourceMemoryIds: [],
+      accessCount: 1,
+      lastAccessedAt: staleAt,
+      strength: 1,
+      createdAt: staleAt,
+      updatedAt: staleAt,
+    } satisfies SemanticMemory);
+
+    const semanticWrites: string[] = [];
+    const origSet = kv.set.bind(kv);
+    kv.set = async (scope: string, key: string, data: unknown) => {
+      if (scope === "mem:semantic") semanticWrites.push(key);
+      return origSet(scope, key, data);
+    };
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "decay",
+    })) as { results: Record<string, unknown> };
+
+    expect(semanticWrites).toEqual(["sem_stale"]);
+    expect(result.results.decay).toEqual({
+      semantic: { scanned: 2, written: 1 },
+      procedural: { scanned: 0, written: 0 },
+    });
+    const stale = (await kv.get("mem:semantic", "sem_stale")) as SemanticMemory;
+    expect(stale.strength).toBeCloseTo(0.81);
+
+    semanticWrites.length = 0;
+    const second = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "decay",
+    })) as { results: Record<string, unknown> };
+    expect(semanticWrites).toEqual([]);
+    expect(second.results.decay).toEqual({
+      semantic: { scanned: 2, written: 0 },
+      procedural: { scanned: 0, written: 0 },
+    });
+    const stillStale = (await kv.get("mem:semantic", "sem_stale")) as SemanticMemory;
+    expect(stillStale.strength).toBe(stale.strength);
+  });
+
+  it("decay does not rewrite rows already at the 0.1 floor", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn(),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    const staleAt = new Date(Date.now() - 60 * 86400000).toISOString();
+    await kv.set("mem:semantic", "sem_floor", {
+      id: "sem_floor",
+      fact: "floored fact",
+      confidence: 0.8,
+      sourceSessionIds: ["ses_1"],
+      sourceMemoryIds: [],
+      accessCount: 1,
+      lastAccessedAt: staleAt,
+      strength: 0.1,
+      createdAt: staleAt,
+      updatedAt: staleAt,
+    } satisfies SemanticMemory);
+
+    const semanticWrites: string[] = [];
+    const origSet = kv.set.bind(kv);
+    kv.set = async (scope: string, key: string, data: unknown) => {
+      if (scope === "mem:semantic") semanticWrites.push(key);
+      return origSet(scope, key, data);
+    };
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "decay",
+    })) as { results: Record<string, unknown> };
+
+    expect(semanticWrites).toEqual([]);
+    expect(result.results.decay).toEqual({
+      semantic: { scanned: 1, written: 0 },
+      procedural: { scanned: 0, written: 0 },
+    });
   });
 });

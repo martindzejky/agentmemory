@@ -159,9 +159,10 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     // Without this guard, N recovered sessions launch N concurrent forced
     // full-corpus consolidations plus N crystallizations.
     //
-    // Debounce: consolidate-pipeline + auto-crystallize are full-corpus LLM
-    // work with no internal "nothing changed" guard. Bound the global corpus
-    // consolidation to once per cooldown window when stopped is invoked.
+    // Debounce: auto-crystallize is full-corpus LLM work with no skip guard.
+    // consolidate-pipeline now skips its LLM pass when the latest summaries
+    // are unchanged, but the first extract after a summary change is still
+    // expensive. Bound both to once per cooldown window when stopped is invoked.
     if (isConsolidationEnabled() && !data.skipConsolidation) {
       if (await consolidationDue(kv)) {
         fireVoid("mem::consolidate-pipeline", { tier: "all", force: true });
