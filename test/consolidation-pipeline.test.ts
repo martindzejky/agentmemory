@@ -315,6 +315,46 @@ describe("Consolidation Pipeline", () => {
     vi.mocked(isConsolidationEnabled).mockReturnValue(true);
   });
 
+  it("semantic-only stamp does not skip a later reflect", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.9">TypeScript is the primary language</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    const reflect = vi.fn(async () => ({ success: true, insights: [] }));
+    sdk.registerFunction("mem::reflect", reflect);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    await sdk.trigger("mem::consolidate-pipeline", { tier: "semantic" });
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+    expect(reflect).not.toHaveBeenCalled();
+
+    const all = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(all.results.semantic).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+    });
+    expect(reflect).toHaveBeenCalledTimes(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+
+    const again = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(again.results.reflect).toMatchObject({
+      skipped: true,
+      reason: "unchanged_corpus",
+    });
+    expect(reflect).toHaveBeenCalledTimes(1);
+  });
+
   it("reruns extraction when a recent summary changes", async () => {
     const provider = {
       name: "test",

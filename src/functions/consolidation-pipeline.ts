@@ -21,6 +21,8 @@ import { logger } from "../logger.js";
 
 const CORPUS_FINGERPRINT_KEY = "consolidation:corpusFingerprint";
 
+type CorpusFingerprint = { hash: string; at: string; reflected?: boolean };
+
 function corpusFingerprint(
   episodes: Array<{ title: string; narrative: string; concepts: string[] }>,
 ): string {
@@ -76,7 +78,9 @@ export function registerConsolidationPipelineFunction(
       const decayDays = getConsolidationDecayDays();
       const results: Record<string, unknown> = {};
       let skipCorpusLlm = false;
-      let pendingCorpusFingerprint: { hash: string; at: string } | null = null;
+      let skipReflect = false;
+      let corpusHash: string | undefined;
+      let pendingCorpusFingerprint: CorpusFingerprint | null = null;
 
       if (tier === "all" || tier === "semantic") {
         const summaries = await kv.list<SessionSummary>(KV.summaries);
@@ -96,11 +100,13 @@ export function registerConsolidationPipelineFunction(
             concepts: s.concepts ?? [],
           }));
           const fingerprint = corpusFingerprint(episodes);
+          corpusHash = fingerprint;
           const stored = await kv
-            .get<{ hash?: string }>(KV.config, CORPUS_FINGERPRINT_KEY)
+            .get<CorpusFingerprint>(KV.config, CORPUS_FINGERPRINT_KEY)
             .catch(() => null);
           if (stored?.hash === fingerprint) {
             skipCorpusLlm = true;
+            skipReflect = stored.reflected === true;
             results.semantic = {
               skipped: true,
               reason: "unchanged_corpus",
@@ -169,7 +175,7 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "reflect") {
-        if (skipCorpusLlm) {
+        if (skipReflect) {
           results.reflect = {
             skipped: true,
             reason: "unchanged_corpus",
@@ -181,6 +187,13 @@ export function registerConsolidationPipelineFunction(
               project: data?.project,
             } });
             results.reflect = reflectResult;
+            if (corpusHash) {
+              pendingCorpusFingerprint = {
+                hash: corpusHash,
+                at: pendingCorpusFingerprint?.at ?? new Date().toISOString(),
+                reflected: true,
+              };
+            }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logger.warn("Reflect tier failed", { error: msg });
