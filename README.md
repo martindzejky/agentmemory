@@ -55,6 +55,8 @@ What shipped (merged PRs #25–#29):
 - **Snapshot-only graph readers.** After a graph reset, `KV.graphNodes` / `KV.graphEdges` still hold orphan rows. Query, search, export, reflect, mesh, cascade, temporal merge, and MCP graph stats read the snapshot only. `mem::graph-snapshot-rebuild` refuses after `resetAt` even with `force`. Incremental extract still fills the snapshot.
 - **Write-path graph search indexes.** When `AGENTMEMORY_GRAPH_SEARCH=true`, search uses token, adjacency, and observation indexes written by `persistGraphDelta`, temporal extract, mesh apply/receive, and cascade. Keys are namespaced by `resetAt`, so pre-reset orphans are never read. First search backfills from the snapshot once per reset. It does not `kv.list` the graph tables. The flag must be the string `true`; the code default stays off.
 
+- **Unchanged-corpus consolidation skip.** The two-hour `mem::consolidate-pipeline` timer no longer re-extracts facts and insights when the latest summaries are unchanged. Decay still lists the tables, but only writes rows whose strength actually changed and stamps `updatedAt` so the next idle tick does not compound.
+
 Graph model this fork settled on:
 
 - Observations and memories are the source of truth.

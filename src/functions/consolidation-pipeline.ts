@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ISdk } from "iii-sdk";
 import type {
   SemanticMemory,
@@ -18,28 +19,47 @@ import { recordAudit } from "./audit.js";
 import { getConsolidationDecayDays, isConsolidationEnabled } from "../config.js";
 import { logger } from "../logger.js";
 
-function applyDecay(
-  items: Array<{
+const CORPUS_FINGERPRINT_KEY = "consolidation:corpusFingerprint";
+
+function corpusFingerprint(
+  episodes: Array<{ title: string; narrative: string; concepts: string[] }>,
+): string {
+  const payload = episodes
+    .map((e) => `${e.title}\n${e.narrative}\n${(e.concepts ?? []).join("\0")}`)
+    .join("\n---\n");
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+function applyDecay<
+  T extends {
     strength: number;
     lastAccessedAt?: string;
     updatedAt: string;
-  }>,
-  decayDays: number,
-): void {
-  if (decayDays <= 0 || !Number.isFinite(decayDays)) return;
-  const now = Date.now();
+  },
+>(items: T[], decayDays: number, nowMs: number, nowIso: string): T[] {
+  if (decayDays <= 0 || !Number.isFinite(decayDays)) return [];
+  const dirty: T[] = [];
   for (const item of items) {
-    const lastAccess = item.lastAccessedAt || item.updatedAt;
-    const daysSince =
-      (now - new Date(lastAccess).getTime()) / (1000 * 60 * 60 * 24);
+    const accessedMs = item.lastAccessedAt
+      ? new Date(item.lastAccessedAt).getTime()
+      : Number.NEGATIVE_INFINITY;
+    const updatedMs = new Date(item.updatedAt).getTime();
+    const lastTouchMs = Math.max(accessedMs, updatedMs);
+    const daysSince = (nowMs - lastTouchMs) / (1000 * 60 * 60 * 24);
     if (daysSince > decayDays) {
       const decayPeriods = Math.floor(daysSince / decayDays);
-      item.strength = Math.max(
+      const next = Math.max(
         0.1,
         item.strength * Math.pow(0.9, decayPeriods),
       );
+      if (next !== item.strength) {
+        item.strength = next;
+        item.updatedAt = nowIso;
+        dirty.push(item);
+      }
     }
   }
+  return dirty;
 }
 
 export function registerConsolidationPipelineFunction(
@@ -55,10 +75,11 @@ export function registerConsolidationPipelineFunction(
       const tier = data?.tier || "all";
       const decayDays = getConsolidationDecayDays();
       const results: Record<string, unknown> = {};
+      let skipCorpusLlm = false;
+      let pendingCorpusFingerprint: { hash: string; at: string } | null = null;
 
       if (tier === "all" || tier === "semantic") {
         const summaries = await kv.list<SessionSummary>(KV.summaries);
-        const existingSemantic = await kv.list<SemanticMemory>(KV.semantic);
 
         if (summaries.length >= 5) {
           const recentSummaries = summaries
@@ -69,61 +90,75 @@ export function registerConsolidationPipelineFunction(
             )
             .slice(0, 20);
 
-          const prompt = buildSemanticMergePrompt(
-            recentSummaries.map((s) => ({
-              title: s.title,
-              narrative: s.narrative,
-              concepts: s.concepts,
-            })),
-          );
+          const episodes = recentSummaries.map((s) => ({
+            title: s.title,
+            narrative: s.narrative,
+            concepts: s.concepts ?? [],
+          }));
+          const fingerprint = corpusFingerprint(episodes);
+          const stored = await kv
+            .get<{ hash?: string }>(KV.config, CORPUS_FINGERPRINT_KEY)
+            .catch(() => null);
+          if (stored?.hash === fingerprint) {
+            skipCorpusLlm = true;
+            results.semantic = {
+              skipped: true,
+              reason: "unchanged_corpus",
+              totalSummaries: summaries.length,
+            };
+          } else {
+            const existingSemantic = await kv.list<SemanticMemory>(KV.semantic);
+            const prompt = buildSemanticMergePrompt(episodes);
 
-          try {
-            const response = await provider.summarize(
-              SEMANTIC_MERGE_SYSTEM,
-              prompt,
-            );
-
-            const factRegex = /<fact\s+confidence="([^"]+)">([^<]+)<\/fact>/g;
-            let match;
-            let newFacts = 0;
-            const now = new Date().toISOString();
-
-            while ((match = factRegex.exec(response)) !== null) {
-              const parsedConf = parseFloat(match[1]);
-              const confidence = Number.isNaN(parsedConf) ? 0.5 : parsedConf;
-              const fact = match[2].trim();
-
-              const existing = existingSemantic.find(
-                (s) => s.fact.toLowerCase() === fact.toLowerCase(),
+            try {
+              const response = await provider.summarize(
+                SEMANTIC_MERGE_SYSTEM,
+                prompt,
               );
-              if (existing) {
-                existing.accessCount++;
-                existing.lastAccessedAt = now;
-                existing.updatedAt = now;
-                existing.confidence = Math.max(existing.confidence, confidence);
-                await kv.set(KV.semantic, existing.id, existing);
-              } else {
-                const sem: SemanticMemory = {
-                  id: generateId("sem"),
-                  fact,
-                  confidence,
-                  sourceSessionIds: recentSummaries.map((s) => s.sessionId),
-                  sourceMemoryIds: [],
-                  accessCount: 1,
-                  lastAccessedAt: now,
-                  strength: confidence,
-                  createdAt: now,
-                  updatedAt: now,
-                };
-                await kv.set(KV.semantic, sem.id, sem);
-                newFacts++;
+
+              const factRegex = /<fact\s+confidence="([^"]+)">([^<]+)<\/fact>/g;
+              let match;
+              let newFacts = 0;
+              const now = new Date().toISOString();
+
+              while ((match = factRegex.exec(response)) !== null) {
+                const parsedConf = parseFloat(match[1]);
+                const confidence = Number.isNaN(parsedConf) ? 0.5 : parsedConf;
+                const fact = match[2].trim();
+
+                const existing = existingSemantic.find(
+                  (s) => s.fact.toLowerCase() === fact.toLowerCase(),
+                );
+                if (existing) {
+                  existing.accessCount++;
+                  existing.lastAccessedAt = now;
+                  existing.updatedAt = now;
+                  existing.confidence = Math.max(existing.confidence, confidence);
+                  await kv.set(KV.semantic, existing.id, existing);
+                } else {
+                  const sem: SemanticMemory = {
+                    id: generateId("sem"),
+                    fact,
+                    confidence,
+                    sourceSessionIds: recentSummaries.map((s) => s.sessionId),
+                    sourceMemoryIds: [],
+                    accessCount: 1,
+                    lastAccessedAt: now,
+                    strength: confidence,
+                    createdAt: now,
+                    updatedAt: now,
+                  };
+                  await kv.set(KV.semantic, sem.id, sem);
+                  newFacts++;
+                }
               }
+              pendingCorpusFingerprint = { hash: fingerprint, at: now };
+              results.semantic = { newFacts, totalSummaries: summaries.length };
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              logger.error("Semantic consolidation failed", { error: msg });
+              results.semantic = { error: msg };
             }
-            results.semantic = { newFacts, totalSummaries: summaries.length };
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.error("Semantic consolidation failed", { error: msg });
-            results.semantic = { error: msg };
           }
         } else {
           results.semantic = {
@@ -134,17 +169,35 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "reflect") {
-        try {
-          const reflectResult = await sdk.trigger({ function_id: "mem::reflect", payload: {
-            maxClusters: 10,
-            project: data?.project,
-          } });
-          results.reflect = reflectResult;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.warn("Reflect tier failed", { error: msg });
-          results.reflect = { error: msg };
+        if (skipCorpusLlm) {
+          results.reflect = {
+            skipped: true,
+            reason: "unchanged_corpus",
+          };
+        } else {
+          try {
+            const reflectResult = await sdk.trigger({ function_id: "mem::reflect", payload: {
+              maxClusters: 10,
+              project: data?.project,
+            } });
+            results.reflect = reflectResult;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn("Reflect tier failed", { error: msg });
+            results.reflect = { error: msg };
+            pendingCorpusFingerprint = null;
+          }
         }
+      }
+
+      if (pendingCorpusFingerprint) {
+        await kv
+          .set(KV.config, CORPUS_FINGERPRINT_KEY, pendingCorpusFingerprint)
+          .catch((err) => {
+            logger.warn("Failed to stamp consolidation corpus fingerprint", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
       }
 
       if (tier === "all" || tier === "procedural") {
@@ -229,21 +282,29 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "decay") {
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
         const semantic = await kv.list<SemanticMemory>(KV.semantic);
-        applyDecay(semantic, decayDays);
-        for (const s of semantic) {
+        const dirtySemantic = applyDecay(semantic, decayDays, nowMs, nowIso);
+        for (const s of dirtySemantic) {
           await kv.set(KV.semantic, s.id, s);
         }
 
         const procedural = await kv.list<ProceduralMemory>(KV.procedural);
-        applyDecay(procedural, decayDays);
-        for (const p of procedural) {
+        const dirtyProcedural = applyDecay(procedural, decayDays, nowMs, nowIso);
+        for (const p of dirtyProcedural) {
           await kv.set(KV.procedural, p.id, p);
         }
 
         results.decay = {
-          semantic: semantic.length,
-          procedural: procedural.length,
+          semantic: {
+            scanned: semantic.length,
+            written: dirtySemantic.length,
+          },
+          procedural: {
+            scanned: procedural.length,
+            written: dirtyProcedural.length,
+          },
         };
       }
 
