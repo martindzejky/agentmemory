@@ -406,6 +406,39 @@ describe("Consolidation Pipeline", () => {
     expect(provider.summarize).toHaveBeenCalledTimes(2);
   });
 
+  it("does not stamp when semantic fails on tier all", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("provider down"))
+        .mockResolvedValue(
+          `<facts><fact confidence="0.9">Recovered fact</fact></facts>`,
+        ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+    const reflect = vi.fn(async () => ({ success: true, insights: [] }));
+    sdk.registerFunction("mem::reflect", reflect);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const failed = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect(failed.results.semantic).toMatchObject({ error: "provider down" });
+    expect(reflect).toHaveBeenCalledTimes(1);
+
+    const recovered = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "all",
+    })) as { results: Record<string, unknown> };
+    expect((recovered.results.semantic as { newFacts: number }).newFacts).toBe(1);
+    expect(provider.summarize).toHaveBeenCalledTimes(2);
+    expect(reflect).toHaveBeenCalledTimes(2);
+  });
+
   it("does not stamp the corpus fingerprint when reflect fails", async () => {
     const provider = {
       name: "test",

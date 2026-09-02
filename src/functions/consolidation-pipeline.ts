@@ -187,7 +187,7 @@ export function registerConsolidationPipelineFunction(
               project: data?.project,
             } });
             results.reflect = reflectResult;
-            if (corpusHash) {
+            if (corpusHash && (skipCorpusLlm || pendingCorpusFingerprint)) {
               pendingCorpusFingerprint = {
                 hash: corpusHash,
                 at: pendingCorpusFingerprint?.at ?? new Date().toISOString(),
