@@ -1,4 +1,4 @@
-import type { JsonSchema } from "./json-schema.js";
+import { asMcpOutputSchema, type McpOutputSchema } from "./json-schema.js";
 import { toolOutputSchemas, type ToolOutputName } from "./output-schemas.js";
 
 export type McpToolDef = {
@@ -9,7 +9,7 @@ export type McpToolDef = {
     properties: Record<string, { type: string; description: string }>;
     required?: string[];
   };
-  outputSchema: JsonSchema;
+  outputSchema: McpOutputSchema;
 };
 
 type McpToolInputDef = Omit<McpToolDef, "outputSchema">;
@@ -19,7 +19,7 @@ function attachOutputSchema(def: McpToolInputDef): McpToolDef {
   if (!schema) {
     throw new Error(`Missing MCP outputSchema for tool ${def.name}`);
   }
-  return { ...def, outputSchema: schema };
+  return { ...def, outputSchema: asMcpOutputSchema(schema) };
 }
 
 export const CORE_TOOLS: McpToolInputDef[] = [

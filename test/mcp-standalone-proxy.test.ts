@@ -366,6 +366,9 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       "memory_smart_search",
     ]);
     expect(beforeTools).toHaveLength(7);
+    for (const tool of before.tools as Array<{ name: string; outputSchema?: { type?: string } }>) {
+      expect(tool.outputSchema?.type, tool.name).toBe("object");
+    }
 
     resetHandleForTests();
     process.env["AGENTMEMORY_TOOLS"] = "core";

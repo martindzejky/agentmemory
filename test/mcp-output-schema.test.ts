@@ -8,7 +8,7 @@ import { z } from "zod";
 import { registerMcpEndpoints } from "../src/mcp/server.js";
 import { getAllTools, getVisibleTools } from "../src/mcp/tools-registry.js";
 import { toolOutputSchemas } from "../src/mcp/output-schemas.js";
-import type { JsonSchema } from "../src/mcp/json-schema.js";
+import { asMcpOutputSchema, type JsonSchema } from "../src/mcp/json-schema.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -98,12 +98,40 @@ describe("MCP output schemas", () => {
     expect(tools.length).toBe(54);
     for (const tool of tools) {
       expect(tool.outputSchema, tool.name).toBeDefined();
-      expect(
-        tool.outputSchema.type === "object" ||
-          Array.isArray(tool.outputSchema.oneOf),
-        tool.name,
-      ).toBe(true);
+      expect(tool.outputSchema.type, tool.name).toBe("object");
     }
+  });
+
+  it("tools/list outputSchema.type is object so Cursor MCP validation accepts the list", () => {
+    const cursorOutputSchema = z
+      .object({ type: z.literal("object") })
+      .passthrough();
+    const tools = getAllTools();
+    expect(tools.length).toBe(54);
+    for (const tool of tools) {
+      const parsed = cursorOutputSchema.safeParse(tool.outputSchema);
+      expect(parsed.success, `${tool.name}: ${parsed.success ? "" : parsed.error.message}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("asMcpOutputSchema wraps a bare oneOf as type object without dropping variants", () => {
+    const wrapped = asMcpOutputSchema({
+      oneOf: [
+        { type: "object", properties: { ok: { type: "boolean" } } },
+        { type: "object", properties: { error: { type: "string" } } },
+      ],
+    });
+    expect(wrapped.type).toBe("object");
+    expect(wrapped.oneOf).toHaveLength(2);
+  });
+
+  it("union tool schemas from oneOfSchema already include type object", () => {
+    expect(toolOutputSchemas.memory_recall.type).toBe("object");
+    expect(toolOutputSchemas.memory_smart_search.type).toBe("object");
+    expect(toolOutputSchemas.memory_slot_get.type).toBe("object");
+    expect(Array.isArray(toolOutputSchemas.memory_recall.oneOf)).toBe(true);
   });
 
   it("output schemas cover the complete registry with no leftovers", () => {
@@ -169,6 +197,7 @@ describe("MCP structuredContent via /mcp/tools and /mcp/call", () => {
     expect(listed.body.tools.length).toBe(getAllTools().length);
     for (const tool of listed.body.tools) {
       expect(tool.outputSchema, tool.name).toBeDefined();
+      expect(tool.outputSchema?.type, tool.name).toBe("object");
     }
   });
 

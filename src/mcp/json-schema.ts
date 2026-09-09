@@ -48,8 +48,16 @@ export function arraySchema(items: JsonSchema, extra: Partial<JsonSchema> = {}):
   return { type: "array", items, ...extra };
 }
 
-export function oneOfSchema(...schemas: JsonSchema[]): JsonSchema {
-  return { oneOf: schemas };
+export type McpOutputSchema = JsonSchema & { type: "object" };
+
+export function oneOfSchema(...schemas: JsonSchema[]): McpOutputSchema {
+  return { type: "object", oneOf: schemas };
+}
+
+export function asMcpOutputSchema(schema: JsonSchema): McpOutputSchema {
+  if (schema.type === "object") return schema as McpOutputSchema;
+  const { type: _ignored, ...rest } = schema;
+  return { type: "object", ...rest };
 }
 
 export function stringEnum(values: string[]): JsonSchema {
