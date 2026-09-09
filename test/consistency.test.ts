@@ -70,11 +70,7 @@ describe("Consistency checks", () => {
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.outputSchema).toBeDefined();
-      expect(
-        tool.outputSchema.type === "object" ||
-          Array.isArray(tool.outputSchema.oneOf) ||
-          Array.isArray(tool.outputSchema.anyOf),
-      ).toBe(true);
+      expect(tool.outputSchema.type).toBe("object");
     }
   });
 

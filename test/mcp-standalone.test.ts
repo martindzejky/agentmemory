@@ -89,6 +89,7 @@ describe("Tools Registry", () => {
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.properties).toBeDefined();
       expect(tool.outputSchema).toBeDefined();
+      expect(tool.outputSchema.type).toBe("object");
     }
   });
 });
